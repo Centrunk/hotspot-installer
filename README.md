@@ -1,6 +1,6 @@
 # Centrunk DVMHost Installation Script
 
-Automated installation script for compiling and installing [DVMHost](https://github.com/DVMProject/dvmhost) on Raspberry Pi OS (64-bit).
+Automated installation script for installing [DVMHost](https://github.com/DVMProject/dvmhost) on Raspberry Pi OS (64-bit).
 
 [![Test Installation on Raspberry Pi OS](https://github.com/Centrunk/hotspot-installer/actions/workflows/test-install.yml/badge.svg)](https://github.com/Centrunk/hotspot-installer/actions/workflows/test-install.yml)
 
@@ -8,7 +8,8 @@ Automated installation script for compiling and installing [DVMHost](https://git
 
 - Automated installation of all prerequisites
 - Netbird VPN installation
-- DVMHost compilation from source
+- Pre-built DVMHost binary download from [Centrunk/dvmbins](https://github.com/Centrunk/dvmbins)
+- Automatic architecture detection (arm64, armhf, amd64)
 - Systemd service installation for Control Channel (CC) and Voice Channel (VC)
 - Support for Raspberry Pi OS 64-bit
 
@@ -45,25 +46,20 @@ sudo ./install.sh --skip-services
 ## What Gets Installed
 
 ### Prerequisites
-- git
-- nano
+- curl
+- wget
+- xz-utils
 - stm32flash
-- gcc-arm-none-eabi
-- cmake
-- libasio-dev
-- libncurses-dev
-- libssl-dev
-- build-essential
 
 ### Software
 - **Netbird** - VPN client for secure networking
-- **DVMHost** - Digital Voice Modem host software
+- **DVMHost** - Digital Voice Modem host software (pre-built binary)
 
 ### Directory Structure
 ```
 /opt/centrunk/
-├── dvmhost/          # DVMHost source and binary
-│   └── dvmhost       # Compiled binary
+├── dvmhost/          # DVMHost binary
+│   └── dvmhost       # Pre-built binary
 └── configs/          # Configuration files
     ├── configCC.yml  # Control Channel config (you create this)
     └── configVC.yml  # Voice Channel config (you create this)
@@ -138,7 +134,6 @@ sudo systemctl disable centrunk.vc.service
 This repository includes GitHub Actions workflows that automatically test the installation script on:
 
 - **Raspberry Pi OS 64-bit** (ARM64) - Using QEMU emulation
-- **Debian ARM64** - Fallback compatibility test
 - **Shell script syntax** - Using shellcheck
 - **Script logic** - Basic functionality tests
 
@@ -153,24 +148,22 @@ Tests run on every push and pull request.
 
 ## Troubleshooting
 
-### Build Fails
+### Download Fails
 
-If the DVMHost build fails, check:
-1. Sufficient disk space (at least 2GB free)
-2. Sufficient RAM (1GB+ recommended)
-3. All prerequisites are installed
+If the DVMHost binary download fails, check:
+1. Internet connectivity
+2. GitHub is accessible
+3. Correct architecture is detected
 
 ```bash
-# Check disk space
-df -h
+# Check your architecture
+uname -m
 
-# Check memory
-free -h
-
-# Retry build manually
-cd /opt/centrunk/dvmhost/build
-sudo make clean
-sudo make -j$(nproc) dvmhost
+# Manual download (for arm64)
+wget https://github.com/Centrunk/dvmbins/raw/master/dvmhost-arm64.tar.xz
+tar -xJf dvmhost-arm64.tar.xz
+sudo cp dvmhost /opt/centrunk/dvmhost/
+sudo chmod +x /opt/centrunk/dvmhost/dvmhost
 ```
 
 ### Service Won't Start

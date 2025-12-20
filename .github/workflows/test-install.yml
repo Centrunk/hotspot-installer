@@ -32,8 +32,6 @@ jobs:
           base_image: raspios_lite_arm64:latest
           # Bind the repository to /repo in the emulated environment
           bind_mount_repository: true
-          # Add extra space for compilation (4GB should be plenty)
-          image_additional_mb: 4096
           # Commands to run inside the Raspberry Pi OS environment
           commands: |
             # Update system
@@ -108,17 +106,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            git \
-            cmake \
-            libasio-dev \
-            libncurses-dev \
-            libssl-dev \
-            build-essential
 
       - name: Test directory creation and script logic
         run: |

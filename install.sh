@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Centrunk DVMHost Installation Script
-# Automates compilation and installation on Raspberry Pi OS (64-bit)
+# Automates installation on Raspberry Pi OS (64-bit)
 #
 # Usage: sudo ./install.sh [options]
 #   Options:
@@ -17,6 +17,9 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
+
+# Binary download URL
+DVMHOST_BINS_REPO="https://github.com/Centrunk/dvmbins/raw/master"
 
 # Default options
 SKIP_NETBIRD=false
@@ -64,6 +67,28 @@ print_error() {
     echo -e "${RED}[X]${NC} $1"
 }
 
+# Detect system architecture
+detect_arch() {
+    local arch
+    arch=$(uname -m)
+    
+    case "$arch" in
+        aarch64|arm64)
+            echo "arm64"
+            ;;
+        armv7l|armhf)
+            echo "armhf"
+            ;;
+        x86_64|amd64)
+            echo "amd64"
+            ;;
+        *)
+            print_error "Unsupported architecture: $arch"
+            exit 1
+            ;;
+    esac
+}
+
 # Check if running as root
 check_root() {
     if [[ $EUID -ne 0 ]]; then
@@ -96,15 +121,10 @@ install_prerequisites() {
 
     print_status "Installing prerequisites..."
     apt-get install -y \
-        git \
-        nano \
-        stm32flash \
-        gcc-arm-none-eabi \
-        cmake \
-        libasio-dev \
-        libncurses-dev \
-        libssl-dev \
-        build-essential
+        curl \
+        wget \
+        xz-utils \
+        stm32flash
 
     print_status "Prerequisites installed successfully"
 }
@@ -149,39 +169,68 @@ create_directories() {
     else
         print_warning "/opt/centrunk/configs already exists"
     fi
+
+    # Create dvmhost directory
+    if [[ ! -d /opt/centrunk/dvmhost ]]; then
+        mkdir -p /opt/centrunk/dvmhost
+        print_status "Created /opt/centrunk/dvmhost"
+    else
+        print_warning "/opt/centrunk/dvmhost already exists"
+    fi
 }
 
-# Clone and build dvmhost
-build_dvmhost() {
-    print_status "Cloning DVMHost repository..."
+# Download and install dvmhost binary
+install_dvmhost() {
+    local arch
+    arch=$(detect_arch)
+    
+    print_status "Detected architecture: $arch"
+    print_status "Downloading DVMHost binary..."
 
-    cd /opt/centrunk
-
-    # Remove existing dvmhost directory if it exists
-    if [[ -d /opt/centrunk/dvmhost ]]; then
-        print_warning "Removing existing dvmhost directory..."
-        rm -rf /opt/centrunk/dvmhost
+    local download_url="${DVMHOST_BINS_REPO}/dvmhost-${arch}.tar.xz"
+    local temp_dir
+    temp_dir=$(mktemp -d)
+    
+    # Download the binary archive
+    if ! wget -q --show-progress -O "${temp_dir}/dvmhost.tar.xz" "$download_url"; then
+        print_error "Failed to download DVMHost binary from $download_url"
+        rm -rf "$temp_dir"
+        exit 1
     fi
 
-    git clone --recurse-submodules https://github.com/DVMProject/dvmhost.git
+    print_status "Extracting DVMHost..."
+    
+    # Extract to temp directory first
+    tar -xJf "${temp_dir}/dvmhost.tar.xz" -C "$temp_dir"
 
-    print_status "Building DVMHost..."
-    cd /opt/centrunk/dvmhost
-
-    # Create build directory for out-of-source build
-    mkdir -p build
-    cd build
-
-    cmake ..
-    make -j"$(nproc)" dvmhost
-
-    # Copy the binary to the expected location
-    if [[ -f dvmhost ]]; then
-        cp dvmhost /opt/centrunk/dvmhost/
-        print_status "DVMHost built successfully"
+    # Find and copy the dvmhost binary
+    if [[ -f "${temp_dir}/dvmhost" ]]; then
+        cp "${temp_dir}/dvmhost" /opt/centrunk/dvmhost/
+        chmod +x /opt/centrunk/dvmhost/dvmhost
+        print_status "DVMHost binary installed to /opt/centrunk/dvmhost/dvmhost"
     else
-        print_error "Build failed - dvmhost binary not found"
-        exit 1
+        # Try to find it in a subdirectory
+        local found_binary
+        found_binary=$(find "$temp_dir" -name "dvmhost" -type f | head -1)
+        if [[ -n "$found_binary" ]]; then
+            cp "$found_binary" /opt/centrunk/dvmhost/
+            chmod +x /opt/centrunk/dvmhost/dvmhost
+            print_status "DVMHost binary installed to /opt/centrunk/dvmhost/dvmhost"
+        else
+            print_error "dvmhost binary not found in archive"
+            rm -rf "$temp_dir"
+            exit 1
+        fi
+    fi
+
+    # Cleanup
+    rm -rf "$temp_dir"
+
+    # Verify the binary works
+    if /opt/centrunk/dvmhost/dvmhost --version 2>/dev/null || /opt/centrunk/dvmhost/dvmhost -h 2>/dev/null; then
+        print_status "DVMHost binary verified successfully"
+    else
+        print_warning "Could not verify DVMHost binary (this may be normal)"
     fi
 }
 
@@ -271,7 +320,7 @@ main() {
     install_prerequisites
     install_netbird
     create_directories
-    build_dvmhost
+    install_dvmhost
     install_services
     print_summary
 }
