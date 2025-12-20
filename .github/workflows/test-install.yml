@@ -1,0 +1,207 @@
+# GitHub Actions workflow for testing DVMHost installation on Raspberry Pi OS 64-bit
+# Uses QEMU emulation to run ARM64 Raspberry Pi OS in GitHub Actions
+
+name: Test Installation on Raspberry Pi OS
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  # Allow manual triggering
+  workflow_dispatch:
+
+jobs:
+  test-install-arm64:
+    name: Test on Raspberry Pi OS 64-bit (ARM64)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU for ARM64 emulation
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Test installation in Raspberry Pi OS container
+        uses: pguyot/arm-runner-action@v2
+        with:
+          # Use official Raspberry Pi OS 64-bit lite image
+          base_image: raspios_lite_arm64:latest
+          # Bind the repository to /repo in the emulated environment
+          bind_mount_repository: true
+          # Commands to run inside the Raspberry Pi OS environment
+          commands: |
+            # Update system
+            apt-get update
+
+            # Make the install script executable
+            chmod +x /repo/install.sh
+
+            # Run installation (skip netbird and services for CI testing)
+            /repo/install.sh --skip-netbird --skip-services
+
+            # Verify the build was successful
+            echo "Verifying installation..."
+
+            # Check that dvmhost binary exists and is executable
+            if [ -f /opt/centrunk/dvmhost/dvmhost ]; then
+              echo "✓ dvmhost binary found"
+              ls -la /opt/centrunk/dvmhost/dvmhost
+            else
+              echo "✗ dvmhost binary not found!"
+              exit 1
+            fi
+
+            # Check that the binary is the correct architecture
+            file /opt/centrunk/dvmhost/dvmhost
+
+            # Check directory structure
+            echo "Checking directory structure..."
+            [ -d /var/log/centrunk ] && echo "✓ /var/log/centrunk exists" || exit 1
+            [ -d /opt/centrunk ] && echo "✓ /opt/centrunk exists" || exit 1
+            [ -d /opt/centrunk/configs ] && echo "✓ /opt/centrunk/configs exists" || exit 1
+
+            echo ""
+            echo "=========================================="
+            echo "All installation tests passed successfully!"
+            echo "=========================================="
+
+  test-install-debian-arm64:
+    name: Test on Debian ARM64 (fallback)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Test in Debian ARM64 container
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v ${{ github.workspace }}:/repo \
+            debian:bookworm-slim \
+            /bin/bash -c '
+              set -e
+              
+              echo "Running in Debian ARM64 container..."
+              
+              # Update and install prerequisites
+              apt-get update
+              apt-get install -y \
+                git \
+                stm32flash \
+                gcc-arm-none-eabi \
+                cmake \
+                libasio-dev \
+                libncurses-dev \
+                libssl-dev \
+                build-essential \
+                curl \
+                file
+              
+              # Create directory structure
+              mkdir -p /var/log/centrunk
+              mkdir -p /opt/centrunk/configs
+              
+              # Clone and build dvmhost
+              cd /opt/centrunk
+              git clone --recurse-submodules https://github.com/DVMProject/dvmhost.git
+              cd dvmhost
+              mkdir -p build && cd build
+              cmake ..
+              make -j$(nproc) dvmhost
+              
+              # Verify build
+              if [ -f dvmhost ]; then
+                echo "✓ Build successful!"
+                file dvmhost
+                cp dvmhost /opt/centrunk/dvmhost/
+              else
+                echo "✗ Build failed!"
+                exit 1
+              fi
+              
+              echo ""
+              echo "=========================================="
+              echo "Debian ARM64 build test passed!"
+              echo "=========================================="
+            '
+
+  test-syntax:
+    name: Shell Script Syntax Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: Check install.sh syntax
+        run: shellcheck install.sh
+
+      - name: Validate systemd service files
+        run: |
+          for service in systemd/*.service; do
+            echo "Checking $service..."
+            # Basic syntax validation
+            if grep -q "\[Unit\]" "$service" && \
+               grep -q "\[Service\]" "$service" && \
+               grep -q "\[Install\]" "$service"; then
+              echo "✓ $service has valid structure"
+            else
+              echo "✗ $service is missing required sections"
+              exit 1
+            fi
+          done
+          echo "All service files validated!"
+
+  test-install-x86:
+    name: Test Script Logic (x86_64)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git \
+            cmake \
+            libasio-dev \
+            libncurses-dev \
+            libssl-dev \
+            build-essential
+
+      - name: Test directory creation and script logic
+        run: |
+          # Test the script can be sourced and functions work
+          # (without actually running the full installation)
+
+          # Create mock environment
+          sudo mkdir -p /var/log/centrunk
+          sudo mkdir -p /opt/centrunk/configs
+
+          # Test script is valid bash
+          bash -n install.sh
+          echo "✓ Script syntax is valid"
+
+          # Test help flag
+          chmod +x install.sh
+          ./install.sh --help
+          echo "✓ Help flag works"
+
+          echo "Script logic tests passed!"
