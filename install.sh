@@ -1,13 +1,14 @@
 #!/bin/bash
 #
 # Centrunk DVMHost Installation Script
-# Automates installation on Raspberry Pi OS (64-bit)
+# Automates installation on Raspberry Pi OS Bookworm (64-bit)
 #
 # Usage: sudo ./install.sh [options]
 #   Options:
-#     --skip-netbird    Skip Netbird installation
-#     --skip-services   Skip systemd service installation
-#     --help            Show this help message
+#     --skip-netbird         Skip Netbird installation
+#     --skip-services        Skip systemd service installation
+#     --skip-platform-check  Skip platform verification (for testing)
+#     --help                 Show this help message
 #
 
 set -e  # Exit on any error
@@ -24,6 +25,7 @@ DVMHOST_BINS_REPO="https://github.com/Centrunk/dvmbins/raw/master"
 # Default options
 SKIP_NETBIRD=false
 SKIP_SERVICES=false
+SKIP_PLATFORM_CHECK=false
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -36,15 +38,20 @@ while [[ $# -gt 0 ]]; do
             SKIP_SERVICES=true
             shift
             ;;
+        --skip-platform-check)
+            SKIP_PLATFORM_CHECK=true
+            shift
+            ;;
         --help)
             echo "Centrunk DVMHost Installation Script"
             echo ""
             echo "Usage: sudo ./install.sh [options]"
             echo ""
             echo "Options:"
-            echo "  --skip-netbird    Skip Netbird installation"
-            echo "  --skip-services   Skip systemd service installation"
-            echo "  --help            Show this help message"
+            echo "  --skip-netbird         Skip Netbird installation"
+            echo "  --skip-services        Skip systemd service installation"
+            echo "  --skip-platform-check  Skip platform verification (for testing)"
+            echo "  --help                 Show this help message"
             exit 0
             ;;
         *)
@@ -97,20 +104,91 @@ check_root() {
     fi
 }
 
-# Check if running on Raspberry Pi OS
-check_os() {
-    if [[ -f /etc/os-release ]]; then
-        # shellcheck source=/dev/null
-        . /etc/os-release
-        if [[ "$ID" != "raspbian" && "$ID" != "debian" ]]; then
-            print_warning "This script is designed for Raspberry Pi OS (Debian-based)"
-            print_warning "Detected: $PRETTY_NAME"
-            read -p "Continue anyway? (y/N) " -n 1 -r
-            echo
-            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                exit 1
-            fi
+# Verify platform and architecture requirements
+check_platform() {
+    if [[ "$SKIP_PLATFORM_CHECK" == "true" ]]; then
+        print_warning "Skipping platform verification (--skip-platform-check flag)"
+        return
+    fi
+    
+    print_status "Verifying platform and architecture..."
+    
+    local errors=0
+    
+    # Check architecture - must be 64-bit ARM
+    local arch
+    arch=$(uname -m)
+    if [[ "$arch" != "aarch64" ]]; then
+        print_error "This installer requires 64-bit ARM architecture (aarch64)"
+        print_error "Detected architecture: $arch"
+        errors=$((errors + 1))
+    else
+        print_status "Architecture: $arch ✓"
+    fi
+    
+    # Check OS release file exists
+    if [[ ! -f /etc/os-release ]]; then
+        print_error "Cannot detect OS - /etc/os-release not found"
+        exit 1
+    fi
+    
+    # shellcheck source=/dev/null
+    . /etc/os-release
+    
+    # Check for Raspberry Pi OS specifically
+    # Raspberry Pi OS sets ID=debian but has "Raspberry Pi" in PRETTY_NAME
+    # It also has /etc/rpi-issue file
+    local is_rpi_os=false
+    if [[ -f /etc/rpi-issue ]]; then
+        is_rpi_os=true
+    elif [[ "$PRETTY_NAME" == *"Raspberry Pi"* ]]; then
+        is_rpi_os=true
+    elif [[ "$ID" == "raspbian" ]]; then
+        is_rpi_os=true
+    fi
+    
+    if [[ "$is_rpi_os" != "true" ]]; then
+        print_error "This installer requires Raspberry Pi OS"
+        print_error "Detected OS: $PRETTY_NAME"
+        errors=$((errors + 1))
+    else
+        print_status "Operating System: Raspberry Pi OS ✓"
+    fi
+    
+    # Check for Bookworm (Debian 12)
+    if [[ "$VERSION_CODENAME" != "bookworm" ]]; then
+        print_error "This installer requires Raspberry Pi OS Bookworm"
+        print_error "Detected version: $VERSION_CODENAME"
+        errors=$((errors + 1))
+    else
+        print_status "Version: Bookworm ✓"
+    fi
+    
+    # Check for 64-bit OS (not just 64-bit CPU)
+    local os_arch
+    os_arch=$(getconf LONG_BIT)
+    if [[ "$os_arch" != "64" ]]; then
+        print_error "This installer requires 64-bit Raspberry Pi OS"
+        print_error "Detected: ${os_arch}-bit OS"
+        errors=$((errors + 1))
+    else
+        print_status "OS Architecture: 64-bit ✓"
+    fi
+    
+    # Exit if any checks failed
+    if [[ $errors -gt 0 ]]; then
+        echo ""
+        print_error "Platform verification failed with $errors error(s)"
+        print_error "This installer requires: Raspberry Pi OS Bookworm 64-bit"
+        echo ""
+        read -p "Continue anyway? (y/N) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            exit 1
         fi
+        print_warning "Continuing despite platform mismatch - this may cause issues!"
+    else
+        print_status "Platform verification passed!"
     fi
 }
 
@@ -316,7 +394,7 @@ main() {
     echo ""
 
     check_root
-    check_os
+    check_platform
     install_prerequisites
     install_netbird
     create_directories

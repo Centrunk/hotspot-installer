@@ -34,6 +34,15 @@ jobs:
           bind_mount_repository: true
           # Commands to run inside the Raspberry Pi OS environment
           commands: |
+            # Verify we're running on Raspberry Pi OS
+            echo "========================================"
+            echo "Verifying Raspberry Pi OS Environment"
+            echo "========================================"
+            cat /etc/os-release
+            echo ""
+            uname -a
+            echo ""
+            
             # Update system
             apt-get update
 
@@ -41,6 +50,7 @@ jobs:
             chmod +x /hotspot-installer/install.sh
 
             # Run installation (skip netbird and services for CI testing)
+            # Platform check should PASS since we're on real Raspberry Pi OS
             /hotspot-installer/install.sh --skip-netbird --skip-services
 
             # Verify the build was successful
