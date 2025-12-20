@@ -10,10 +10,25 @@ Automated installation script for installing [DVMHost](https://github.com/DVMPro
 - Netbird VPN installation
 - Pre-built DVMHost binary download from [Centrunk/dvmbins](https://github.com/Centrunk/dvmbins)
 - Automatic architecture detection (arm64, armhf, amd64)
+- Platform verification (Raspberry Pi OS Bookworm/Trixie 64-bit)
 - Systemd service installation for Control Channel (CC) and Voice Channel (VC)
-- Support for Raspberry Pi OS 64-bit
+- One-liner installation support
 
-## Quick Start
+## One-Liner Installation
+
+Run this command on your Raspberry Pi:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Centrunk/hotspot-installer/main/install.sh | sudo bash
+```
+
+Or with wget:
+
+```bash
+wget -qO- https://raw.githubusercontent.com/Centrunk/hotspot-installer/main/install.sh | sudo bash
+```
+
+## Manual Installation
 
 ```bash
 # Clone this repository
@@ -32,6 +47,9 @@ sudo ./install.sh
 ```bash
 # Full installation
 sudo ./install.sh
+
+# Non-interactive mode (no prompts)
+sudo ./install.sh -y
 
 # Skip Netbird installation
 sudo ./install.sh --skip-netbird

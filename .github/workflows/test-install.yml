@@ -42,7 +42,7 @@ jobs:
             echo ""
             uname -a
             echo ""
-            
+
             # Update system
             apt-get update
 

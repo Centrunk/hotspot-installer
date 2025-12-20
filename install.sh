@@ -1,14 +1,18 @@
 #!/bin/bash
 #
 # Centrunk DVMHost Installation Script
-# Automates installation on Raspberry Pi OS Bookworm (64-bit)
+# Automates installation on Raspberry Pi OS Bookworm/Trixie (64-bit)
 #
 # Usage: sudo ./install.sh [options]
 #   Options:
 #     --skip-netbird         Skip Netbird installation
 #     --skip-services        Skip systemd service installation
 #     --skip-platform-check  Skip platform verification (for testing)
+#     -y, --yes              Non-interactive mode (assume yes to prompts)
 #     --help                 Show this help message
+#
+# One-liner installation:
+#   curl -fsSL https://raw.githubusercontent.com/Centrunk/hotspot-installer/main/install.sh | sudo bash
 #
 
 set -e  # Exit on any error
@@ -26,6 +30,12 @@ DVMHOST_BINS_REPO="https://github.com/Centrunk/dvmbins/raw/master"
 SKIP_NETBIRD=false
 SKIP_SERVICES=false
 SKIP_PLATFORM_CHECK=false
+NON_INTERACTIVE=false
+
+# Detect if running from a pipe (non-interactive)
+if [[ ! -t 0 ]]; then
+    NON_INTERACTIVE=true
+fi
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -42,6 +52,10 @@ while [[ $# -gt 0 ]]; do
             SKIP_PLATFORM_CHECK=true
             shift
             ;;
+        -y|--yes)
+            NON_INTERACTIVE=true
+            shift
+            ;;
         --help)
             echo "Centrunk DVMHost Installation Script"
             echo ""
@@ -51,7 +65,11 @@ while [[ $# -gt 0 ]]; do
             echo "  --skip-netbird         Skip Netbird installation"
             echo "  --skip-services        Skip systemd service installation"
             echo "  --skip-platform-check  Skip platform verification (for testing)"
+            echo "  -y, --yes              Non-interactive mode (assume yes to prompts)"
             echo "  --help                 Show this help message"
+            echo ""
+            echo "One-liner installation:"
+            echo "  curl -fsSL https://raw.githubusercontent.com/Centrunk/hotspot-installer/main/install.sh | sudo bash"
             exit 0
             ;;
         *)
@@ -181,6 +199,11 @@ check_platform() {
         print_error "Platform verification failed with $errors error(s)"
         print_error "This installer requires: Raspberry Pi OS Bookworm/Trixie 64-bit"
         echo ""
+        if [[ "$NON_INTERACTIVE" == "true" ]]; then
+            print_error "Non-interactive mode: aborting due to platform mismatch"
+            print_error "Use --skip-platform-check to bypass this check"
+            exit 1
+        fi
         read -p "Continue anyway? (y/N) " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
