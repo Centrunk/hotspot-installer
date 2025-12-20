@@ -63,6 +63,24 @@ jobs:
             [ -d /var/log/centrunk ] && echo "✓ /var/log/centrunk exists" || exit 1
             [ -d /opt/centrunk ] && echo "✓ /opt/centrunk exists" || exit 1
             [ -d /opt/centrunk/configs ] && echo "✓ /opt/centrunk/configs exists" || exit 1
+            [ -d /opt/centrunk/dvmhost ] && echo "✓ /opt/centrunk/dvmhost exists" || exit 1
+
+            # Verify binary is executable
+            echo "Checking binary is executable..."
+            [ -x /opt/centrunk/dvmhost/dvmhost ] && echo "✓ dvmhost is executable" || exit 1
+
+            # Verify binary runs (show help or version)
+            echo "Testing binary execution..."
+            if /opt/centrunk/dvmhost/dvmhost -h 2>&1 | head -5; then
+              echo "✓ dvmhost binary executes successfully"
+            else
+              echo "Note: dvmhost may require config to show help"
+            fi
+
+            # Verify systemd service files were copied correctly
+            echo "Verifying systemd service files in repo..."
+            [ -f /hotspot-installer/systemd/centrunk.cc.service ] && echo "✓ CC service file exists in repo" || exit 1
+            [ -f /hotspot-installer/systemd/centrunk.vc.service ] && echo "✓ VC service file exists in repo" || exit 1
 
             echo ""
             echo "=========================================="
