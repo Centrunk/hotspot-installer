@@ -32,6 +32,8 @@ jobs:
           base_image: raspios_lite_arm64:latest
           # Bind the repository to /repo in the emulated environment
           bind_mount_repository: true
+          # Add extra space for compilation (4GB should be plenty)
+          image_additional_mb: 4096
           # Commands to run inside the Raspberry Pi OS environment
           commands: |
             # Update system
