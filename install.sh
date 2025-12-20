@@ -155,13 +155,13 @@ check_platform() {
         print_status "Operating System: Raspberry Pi OS ✓"
     fi
     
-    # Check for Bookworm (Debian 12)
-    if [[ "$VERSION_CODENAME" != "bookworm" ]]; then
-        print_error "This installer requires Raspberry Pi OS Bookworm"
+    # Check for Bookworm (Debian 12) or Trixie (Debian 13)
+    if [[ "$VERSION_CODENAME" != "bookworm" && "$VERSION_CODENAME" != "trixie" ]]; then
+        print_error "This installer requires Raspberry Pi OS Bookworm or Trixie"
         print_error "Detected version: $VERSION_CODENAME"
         errors=$((errors + 1))
     else
-        print_status "Version: Bookworm ✓"
+        print_status "Version: $VERSION_CODENAME ✓"
     fi
     
     # Check for 64-bit OS (not just 64-bit CPU)
@@ -179,7 +179,7 @@ check_platform() {
     if [[ $errors -gt 0 ]]; then
         echo ""
         print_error "Platform verification failed with $errors error(s)"
-        print_error "This installer requires: Raspberry Pi OS Bookworm 64-bit"
+        print_error "This installer requires: Raspberry Pi OS Bookworm/Trixie 64-bit"
         echo ""
         read -p "Continue anyway? (y/N) " -n 1 -r
         echo
