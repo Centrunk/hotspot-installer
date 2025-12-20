@@ -2,7 +2,7 @@
 
 Automated installation script for compiling and installing [DVMHost](https://github.com/DVMProject/dvmhost) on Raspberry Pi OS (64-bit).
 
-[![Test Installation on Raspberry Pi OS](https://github.com/YOUR_USERNAME/ctrs-install-script/actions/workflows/test-install.yml/badge.svg)](https://github.com/YOUR_USERNAME/ctrs-install-script/actions/workflows/test-install.yml)
+[![Test Installation on Raspberry Pi OS](https://github.com/Centrunk/hotspot-installer/actions/workflows/test-install.yml/badge.svg)](https://github.com/Centrunk/hotspot-installer/actions/workflows/test-install.yml)
 
 ## Features
 
@@ -16,8 +16,8 @@ Automated installation script for compiling and installing [DVMHost](https://git
 
 ```bash
 # Clone this repository
-git clone https://github.com/YOUR_USERNAME/ctrs-install-script.git
-cd ctrs-install-script
+git clone https://github.com/Centrunk/hotspot-installer.git
+cd hotspot-installer
 
 # Make the script executable
 chmod +x install.sh
