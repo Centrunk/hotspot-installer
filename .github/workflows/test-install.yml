@@ -37,11 +37,11 @@ jobs:
             # Update system
             apt-get update
 
-            # Make the install script executable
-            chmod +x /repo/install.sh
+            # The repository is mounted at /hotspot-installer (repo name)
+            chmod +x /hotspot-installer/install.sh
 
             # Run installation (skip netbird and services for CI testing)
-            /repo/install.sh --skip-netbird --skip-services
+            /hotspot-installer/install.sh --skip-netbird --skip-services
 
             # Verify the build was successful
             echo "Verifying installation..."

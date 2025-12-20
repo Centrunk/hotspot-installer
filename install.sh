@@ -75,6 +75,7 @@ check_root() {
 # Check if running on Raspberry Pi OS
 check_os() {
     if [[ -f /etc/os-release ]]; then
+        # shellcheck source=/dev/null
         . /etc/os-release
         if [[ "$ID" != "raspbian" && "$ID" != "debian" ]]; then
             print_warning "This script is designed for Raspberry Pi OS (Debian-based)"
@@ -172,7 +173,7 @@ build_dvmhost() {
     cd build
 
     cmake ..
-    make -j$(nproc) dvmhost
+    make -j"$(nproc)" dvmhost
 
     # Copy the binary to the expected location
     if [[ -f dvmhost ]]; then
