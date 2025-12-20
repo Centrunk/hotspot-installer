@@ -154,3 +154,65 @@ jobs:
           echo "✓ Help flag works"
 
           echo "Script logic tests passed!"
+
+  # Discord notification on success or failure
+  notify-discord:
+    name: Discord Notification
+    runs-on: ubuntu-latest
+    needs: [test-install-arm64, test-syntax, test-install-x86]
+    if: always()
+    
+    steps:
+      - name: Send Discord notification
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          ARM64_RESULT: ${{ needs.test-install-arm64.result }}
+          SYNTAX_RESULT: ${{ needs.test-syntax.result }}
+          X86_RESULT: ${{ needs.test-install-x86.result }}
+        run: |
+          # Determine overall status
+          if [[ "$ARM64_RESULT" == "success" && "$SYNTAX_RESULT" == "success" && "$X86_RESULT" == "success" ]]; then
+            STATUS="success"
+            TITLE="✅ CI/CD Pipeline Passed"
+            DESCRIPTION="All tests passed successfully!"
+            COLOR=3066993
+          else
+            STATUS="failure"
+            TITLE="❌ CI/CD Pipeline Failed"
+            DESCRIPTION="One or more tests failed."
+            COLOR=15158332
+          fi
+
+          # Build job status field
+          get_emoji() {
+            case "$1" in
+              success) echo "✅" ;;
+              failure) echo "❌" ;;
+              cancelled) echo "⚪" ;;
+              skipped) echo "⏭️" ;;
+              *) echo "❓" ;;
+            esac
+          }
+
+          JOB_STATUS="$(get_emoji "$ARM64_RESULT") ARM64: $ARM64_RESULT\n$(get_emoji "$SYNTAX_RESULT") Syntax: $SYNTAX_RESULT\n$(get_emoji "$X86_RESULT") x86: $X86_RESULT"
+
+          curl -H "Content-Type: application/json" \
+            -d "{
+              \"username\": \"GitHub Actions\",
+              \"avatar_url\": \"https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png\",
+              \"embeds\": [{
+                \"title\": \"$TITLE\",
+                \"description\": \"$DESCRIPTION\",
+                \"color\": $COLOR,
+                \"fields\": [
+                  {\"name\": \"Repository\", \"value\": \"${{ github.repository }}\", \"inline\": true},
+                  {\"name\": \"Branch\", \"value\": \"${{ github.ref_name }}\", \"inline\": true},
+                  {\"name\": \"Commit\", \"value\": \"[\`${GITHUB_SHA::7}\`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})\", \"inline\": true},
+                  {\"name\": \"Author\", \"value\": \"${{ github.actor }}\", \"inline\": true},
+                  {\"name\": \"Job Results\", \"value\": \"$JOB_STATUS\", \"inline\": true},
+                  {\"name\": \"Run\", \"value\": \"[View Details](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})\", \"inline\": true}
+                ],
+                \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"
+              }]
+            }" \
+            "$DISCORD_WEBHOOK"
