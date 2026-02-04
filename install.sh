@@ -237,10 +237,18 @@ install_netbird() {
         return
     fi
 
+    # Check if Netbird is already running
+    if systemctl is-active --quiet netbird 2>/dev/null || pgrep -x netbird >/dev/null 2>&1; then
+        print_status "Netbird is already running - skipping installation"
+        NETBIRD_ALREADY_RUNNING=true
+        return
+    fi
+
     print_status "Installing Netbird..."
     curl -fsSL https://pkgs.netbird.io/install.sh | sh
 
     print_status "Netbird installed successfully"
+    NETBIRD_ALREADY_RUNNING=false
 }
 
 # Create directory structure
@@ -403,8 +411,14 @@ print_summary() {
     echo "     sudo systemctl status centrunk.vc.service"
     echo ""
     if [[ "$SKIP_NETBIRD" != "true" ]]; then
-        echo "  4. Configure Netbird:"
-        echo "     sudo netbird up"
+        if [[ "${NETBIRD_ALREADY_RUNNING:-false}" == "true" ]]; then
+            echo "  4. Netbird Status:"
+            echo "     Netbird was already running on this system"
+            echo "     No configuration needed - using existing setup"
+        else
+            echo "  4. Configure Netbird (using the correct hostname):"
+            echo "     sudo netbird up --management-url https://netbird.centrunk.net --allow-server-ssh --setup-key C284219E-4A20-4DF3-A414-B2E507131BC4 --hostname hs-4DIGITRID-RFSS-SITE"
+        fi
         echo ""
     fi
 }
