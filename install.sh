@@ -7,6 +7,7 @@
 #   Options:
 #     --skip-netbird         Skip Netbird installation
 #     --skip-services        Skip systemd service installation
+#     --skip-firmware-build  Skip firmware compilation
 #     --skip-platform-check  Skip platform verification (for testing)
 #     -y, --yes              Non-interactive mode (assume yes to prompts)
 #     --help                 Show this help message
@@ -26,9 +27,13 @@ NC='\033[0m' # No Color
 # Binary download URL
 DVMHOST_BINS_REPO="https://github.com/Centrunk/dvmbins/raw/master"
 
+# Installer repo (for downloading service files, etc. when running via pipe)
+INSTALLER_REPO_RAW="https://raw.githubusercontent.com/Centrunk/hotspot-installer/main"
+
 # Default options
 SKIP_NETBIRD=false
 SKIP_SERVICES=false
+SKIP_FIRMWARE_BUILD=false
 SKIP_PLATFORM_CHECK=false
 NON_INTERACTIVE=false
 
@@ -48,6 +53,10 @@ while [[ $# -gt 0 ]]; do
             SKIP_SERVICES=true
             shift
             ;;
+        --skip-firmware-build)
+            SKIP_FIRMWARE_BUILD=true
+            shift
+            ;;
         --skip-platform-check)
             SKIP_PLATFORM_CHECK=true
             shift
@@ -64,6 +73,7 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --skip-netbird         Skip Netbird installation"
             echo "  --skip-services        Skip systemd service installation"
+            echo "  --skip-firmware-build  Skip firmware compilation"
             echo "  --skip-platform-check  Skip platform verification (for testing)"
             echo "  -y, --yes              Non-interactive mode (assume yes to prompts)"
             echo "  --help                 Show this help message"
@@ -222,10 +232,15 @@ install_prerequisites() {
 
     print_status "Installing prerequisites..."
     apt-get install -y \
+        git \
         curl \
         wget \
         xz-utils \
-        stm32flash
+        stm32flash \
+        make \
+        gcc-arm-none-eabi \
+        binutils-arm-none-eabi \
+        libnewlib-arm-none-eabi
 
     print_status "Prerequisites installed successfully"
 }
@@ -286,6 +301,46 @@ create_directories() {
     else
         print_warning "/opt/centrunk/dvmhost already exists"
     fi
+}
+
+# Clone DVMProject firmware source
+clone_firmware() {
+    local dest="/opt/centrunk/dvmfirmware-hs"
+
+    if [[ -d "$dest" ]]; then
+        print_warning "$dest already exists - pulling latest changes"
+        git -C "$dest" pull --recurse-submodules || print_warning "git pull failed - continuing with existing checkout"
+        return
+    fi
+
+    print_status "Cloning dvmfirmware-hs..."
+    if ! git clone --recurse-submodules https://github.com/DVMProject/dvmfirmware-hs.git "$dest"; then
+        print_error "Failed to clone dvmfirmware-hs"
+        exit 1
+    fi
+    print_status "dvmfirmware-hs cloned to $dest"
+}
+
+# Build firmware for MMDVM_HS_Hat (dual)
+build_firmware() {
+    if [[ "$SKIP_FIRMWARE_BUILD" == "true" ]]; then
+        print_warning "Skipping firmware build (--skip-firmware-build flag)"
+        return
+    fi
+
+    local src="/opt/centrunk/dvmfirmware-hs"
+
+    if [[ ! -d "$src" ]]; then
+        print_error "Firmware source not found at $src - cannot build"
+        exit 1
+    fi
+
+    print_status "Building dvmfirmware-hs (mmdvm-hs-hat-dual)..."
+    if ! make -C "$src" -f Makefile.STM32FX mmdvm-hs-hat-dual; then
+        print_error "Firmware build failed"
+        exit 1
+    fi
+    print_status "Firmware build complete"
 }
 
 # Remove console parameters from boot cmdline
@@ -366,7 +421,19 @@ disable_bluetooth() {
             ;;
     esac
     
-    systemctl disable hciuart 2>/dev/null || true
+    # Disable and mask serial/bluetooth services to free up ttyAMA0
+    local services_to_disable=(
+        "serial-getty@ttyAMA0.service"
+        "hciuart.service"
+        "bluealsa.service"
+        "bluetooth.service"
+    )
+    for svc in "${services_to_disable[@]}"; do
+        systemctl disable "$svc" 2>/dev/null || true
+        systemctl mask "$svc" 2>/dev/null || true
+    done
+    print_status "Disabled and masked serial/bluetooth services"
+
     print_warning "UART configuration updated - reboot required"
 }
 
@@ -434,24 +501,24 @@ install_services() {
 
     print_status "Installing systemd services..."
 
-    # Get the directory where this script is located
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
 
-    # Install CC service
-    if [[ -f "$SCRIPT_DIR/systemd/centrunk.cc.service" ]]; then
-        cp "$SCRIPT_DIR/systemd/centrunk.cc.service" /etc/systemd/system/
-        print_status "Installed centrunk.cc.service"
-    else
-        print_warning "centrunk.cc.service not found in $SCRIPT_DIR/systemd/"
-    fi
+    local services=("centrunk.cc.service" "centrunk.vc.service")
 
-    # Install VC service
-    if [[ -f "$SCRIPT_DIR/systemd/centrunk.vc.service" ]]; then
-        cp "$SCRIPT_DIR/systemd/centrunk.vc.service" /etc/systemd/system/
-        print_status "Installed centrunk.vc.service"
-    else
-        print_warning "centrunk.vc.service not found in $SCRIPT_DIR/systemd/"
-    fi
+    for svc in "${services[@]}"; do
+        local url="${INSTALLER_REPO_RAW}/systemd/${svc}"
+        print_status "Downloading ${svc}..."
+        if ! curl -fsSL -o "${tmp_dir}/${svc}" "$url"; then
+            print_error "Failed to download ${svc} from ${url}"
+            rm -rf "$tmp_dir"
+            exit 1
+        fi
+        cp "${tmp_dir}/${svc}" /etc/systemd/system/
+        print_status "Installed ${svc}"
+    done
+
+    rm -rf "$tmp_dir"
 
     # Reload systemd
     systemctl daemon-reload
@@ -503,6 +570,12 @@ print_summary() {
         fi
         echo ""
     fi
+    echo -e "${RED}======================================${NC}"
+    echo -e "${RED}  YOU MUST REBOOT BEFORE CONTINUING   ${NC}"
+    echo -e "${RED}======================================${NC}"
+    echo ""
+    echo -e "  Run: ${GREEN}sudo reboot${NC}"
+    echo ""
 }
 
 # Main installation flow
@@ -517,6 +590,8 @@ main() {
     install_prerequisites
     install_netbird
     create_directories
+    clone_firmware
+    build_firmware
     remove_console_params
     disable_bluetooth
     install_dvmhost
