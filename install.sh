@@ -288,6 +288,88 @@ create_directories() {
     fi
 }
 
+# Remove console parameters from boot cmdline
+remove_console_params() {
+    local modified=false
+    for cmdline_file in /boot/cmdline.txt /boot/firmware/cmdline.txt; do
+        if [[ -f "$cmdline_file" ]] && grep -q "console=" "$cmdline_file"; then
+            cp "$cmdline_file" "${cmdline_file}.backup"
+            sed -i 's/console=[^ ]*//g; s/  */ /g; s/^ //; s/ $//' "$cmdline_file"
+            modified=true
+        fi
+    done
+    [[ "$modified" == "true" ]] && print_warning "Boot cmdline modified - reboot required"
+}
+
+# Disable Bluetooth to free up ttyAMA0
+disable_bluetooth() {
+    local config_file=""
+    [[ -f /boot/firmware/config.txt ]] && config_file="/boot/firmware/config.txt"
+    [[ -f /boot/config.txt ]] && config_file="/boot/config.txt"
+    
+    if [[ -z "$config_file" ]]; then
+        print_warning "No config.txt found - skipping Bluetooth disable"
+        return
+    fi
+    
+    # Detect Pi model
+    local pi_model=""
+    if [[ -f /proc/device-tree/model ]]; then
+        local model_str
+        model_str=$(tr -d '\0' < /proc/device-tree/model)
+        if [[ "$model_str" == *"Raspberry Pi 5"* ]]; then
+            pi_model="pi5"
+        elif [[ "$model_str" == *"Raspberry Pi 4"* ]]; then
+            pi_model="pi4"
+        elif [[ "$model_str" == *"Raspberry Pi 3"* ]]; then
+            pi_model="pi3"
+        fi
+    fi
+    
+    if [[ -z "$pi_model" ]]; then
+        print_warning "Could not detect Pi model - skipping Bluetooth configuration"
+        return
+    fi
+    
+    cp "$config_file" "${config_file}.backup"
+    
+    # Ensure [all] section exists
+    if ! grep -q "^\[all\]" "$config_file"; then
+        echo -e "\n[all]" >> "$config_file"
+    fi
+    
+    case "$pi_model" in
+        pi3)
+            if ! grep -q "^dtoverlay=pi3-disable-bt" "$config_file"; then
+                sed -i '/^\[all\]/a dtoverlay=pi3-disable-bt' "$config_file"
+                print_status "Added Pi 3 Bluetooth disable to $config_file"
+            fi
+            ;;
+        pi4)
+            if ! grep -q "^dtoverlay=disable-bt" "$config_file"; then
+                sed -i '/^\[all\]/a dtoverlay=disable-bt' "$config_file"
+                print_status "Added Pi 4 Bluetooth disable to $config_file"
+            fi
+            ;;
+        pi5)
+            local needs_update=false
+            if ! grep -q "^enable_uart=1" "$config_file"; then
+                needs_update=true
+            fi
+            if ! grep -q "^dtoverlay=uart0,ctsrts" "$config_file"; then
+                needs_update=true
+            fi
+            if [[ "$needs_update" == "true" ]]; then
+                sed -i '/^\[all\]/a dtoverlay=uart0,ctsrts\nenable_uart=1' "$config_file"
+                print_status "Added Pi 5 UART configuration to $config_file"
+            fi
+            ;;
+    esac
+    
+    systemctl disable hciuart 2>/dev/null || true
+    print_warning "UART configuration updated - reboot required"
+}
+
 # Download and install dvmhost binary
 install_dvmhost() {
     local arch
@@ -435,6 +517,8 @@ main() {
     install_prerequisites
     install_netbird
     create_directories
+    remove_console_params
+    disable_bluetooth
     install_dvmhost
     install_services
     print_summary
