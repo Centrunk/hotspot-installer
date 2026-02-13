@@ -252,17 +252,18 @@ install_netbird() {
         return
     fi
 
-    # Track whether Netbird was already configured (for summary message)
+    # Check if Netbird is already running
     if systemctl is-active --quiet netbird 2>/dev/null || pgrep -x netbird >/dev/null 2>&1; then
+        print_status "Netbird is already running - skipping installation"
         NETBIRD_ALREADY_RUNNING=true
-    else
-        NETBIRD_ALREADY_RUNNING=false
+        return
     fi
 
     print_status "Installing Netbird..."
     curl -fsSL https://pkgs.netbird.io/install.sh | sh
 
     print_status "Netbird installed successfully"
+    NETBIRD_ALREADY_RUNNING=false
 }
 
 # Create directory structure
@@ -538,6 +539,8 @@ print_summary() {
     echo "======================================"
     echo -e "${GREEN}Installation Complete!${NC}"
     echo "======================================"
+    echo ""
+    echo -e "${GREEN}You may re-run this script as needed to repair your installation.${NC}"
     echo ""
     echo "DVMHost binary: /opt/centrunk/dvmhost/dvmhost"
     echo "Config directory: /opt/centrunk/configs/"
