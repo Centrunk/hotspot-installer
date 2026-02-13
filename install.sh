@@ -259,7 +259,7 @@ install_netbird() {
         return
     fi
 
-    if [ ! $NETBIRD_ALREADY_RUNNING ]; then
+    if [ ! "$NETBIRD_ALREADY_RUNNING" ]; then
       print_status "Installing Netbird..."
       curl -fsSL https://pkgs.netbird.io/install.sh | sh
     fi
