@@ -30,6 +30,8 @@ jobs:
         with:
           # Use official Raspberry Pi OS 64-bit lite image
           base_image: raspios_lite_arm64:latest
+          # Add extra space for cross-compilation toolchain (~3.3 GB)
+          image_additional_mb: 4096
           # Bind the repository to /repo in the emulated environment
           bind_mount_repository: true
           # Commands to run inside the Raspberry Pi OS environment
