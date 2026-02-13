@@ -31,10 +31,10 @@ TODO.md                  # Project backlog
 1. `check_root` - Must run as root
 2. `check_platform` - Verify Pi OS Bookworm/Trixie 64-bit (skippable)
 3. `install_prerequisites` - apt packages: git, curl, wget, xz-utils, stm32flash, make, gcc-arm-none-eabi, binutils-arm-none-eabi, libnewlib-arm-none-eabi
-4. `install_netbird` - VPN client via `pkgs.netbird.io/install.sh` (skips if already running)
+4. `install_netbird` - VPN client via `pkgs.netbird.io/install.sh` (always reinstalls; preserves existing config)
 5. `create_directories` - `/opt/centrunk/{dvmhost,configs}`, `/var/log/centrunk/`
 6. `clone_firmware` - Clone `DVMProject/dvmfirmware-hs` to `/opt/centrunk/dvmfirmware-hs`
-7. `build_firmware` - Build `mmdvm-hs-hat-dual` target via `Makefile.STM32FX`
+7. `build_firmware` - Clean then build `mmdvm-hs-hat-dual` target via `Makefile.STM32FX`
 8. `remove_console_params` - Strip `console=` params from boot cmdline
 9. `disable_bluetooth` - Pi model-specific dtoverlay config, disable/mask BT and serial services
 10. `install_dvmhost` - Download pre-built binary from `Centrunk/dvmbins` (arch-specific `.tar.xz`)
@@ -81,6 +81,11 @@ Script detects piped input (`[[ ! -t 0 ]]`) and auto-enables non-interactive mod
 - Use `local` for function-scoped variables
 - Idempotent: check if directories/services exist before creating
 - Cleanup temp files with `rm -rf "$temp_dir"` after use
+
+### Idempotent
+- Script should be able to be re-run successfully
+- Each re-run should "reset" everything except the configCC.yml and configVC.yml
+- Netbird is always reinstalled/updated but its configuration is never reset
 
 ### Error Handling
 - `set -e` for fail-fast

@@ -252,18 +252,17 @@ install_netbird() {
         return
     fi
 
-    # Check if Netbird is already running
+    # Track whether Netbird was already configured (for summary message)
     if systemctl is-active --quiet netbird 2>/dev/null || pgrep -x netbird >/dev/null 2>&1; then
-        print_status "Netbird is already running - skipping installation"
         NETBIRD_ALREADY_RUNNING=true
-        return
+    else
+        NETBIRD_ALREADY_RUNNING=false
     fi
 
     print_status "Installing Netbird..."
     curl -fsSL https://pkgs.netbird.io/install.sh | sh
 
     print_status "Netbird installed successfully"
-    NETBIRD_ALREADY_RUNNING=false
 }
 
 # Create directory structure
@@ -336,7 +335,7 @@ build_firmware() {
     fi
 
     print_status "Cleaning firmware build directory..."
-    if ! make -C "$src" -f Makefile.STM32FX mmdvm-hs-hat-dual clean; then
+    if ! make -C "$src" -f Makefile.STM32FX clean; then
         print_warning "Firmware clean failed - continuing with build"
     fi
 
@@ -412,16 +411,13 @@ disable_bluetooth() {
             fi
             ;;
         pi5)
-            local needs_update=false
-            if ! grep -q "^enable_uart=1" "$config_file"; then
-                needs_update=true
-            fi
             if ! grep -q "^dtoverlay=uart0,ctsrts" "$config_file"; then
-                needs_update=true
+                sed -i '/^\[all\]/a dtoverlay=uart0,ctsrts' "$config_file"
+                print_status "Added dtoverlay=uart0,ctsrts to $config_file"
             fi
-            if [[ "$needs_update" == "true" ]]; then
-                sed -i '/^\[all\]/a dtoverlay=uart0,ctsrts\nenable_uart=1' "$config_file"
-                print_status "Added Pi 5 UART configuration to $config_file"
+            if ! grep -q "^enable_uart=1" "$config_file"; then
+                sed -i '/^\[all\]/a enable_uart=1' "$config_file"
+                print_status "Added enable_uart=1 to $config_file"
             fi
             ;;
     esac
