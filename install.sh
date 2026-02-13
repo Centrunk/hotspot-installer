@@ -361,7 +361,9 @@ remove_console_params() {
             modified=true
         fi
     done
-    [[ "$modified" == "true" ]] && print_warning "Boot cmdline modified - reboot required"
+    if [[ "$modified" == "true" ]]; then
+        print_warning "Boot cmdline modified - reboot required"
+    fi
 }
 
 # Disable Bluetooth to free up ttyAMA0
