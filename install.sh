@@ -369,8 +369,12 @@ remove_console_params() {
 # Disable Bluetooth to free up ttyAMA0
 disable_bluetooth() {
     local config_file=""
-    [[ -f /boot/firmware/config.txt ]] && config_file="/boot/firmware/config.txt"
-    [[ -f /boot/config.txt ]] && config_file="/boot/config.txt"
+    if [[ -f /boot/firmware/config.txt ]]; then
+        config_file="/boot/firmware/config.txt"
+    fi
+    if [[ -f /boot/config.txt ]]; then
+        config_file="/boot/config.txt"
+    fi
     
     if [[ -z "$config_file" ]]; then
         print_warning "No config.txt found - skipping Bluetooth disable"
