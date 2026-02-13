@@ -335,6 +335,11 @@ build_firmware() {
         exit 1
     fi
 
+    print_status "Cleaning firmware build directory..."
+    if ! make -C "$src" -f Makefile.STM32FX mmdvm-hs-hat-dual clean; then
+        print_warning "Firmware clean failed - continuing with build"
+    fi
+
     print_status "Building dvmfirmware-hs (mmdvm-hs-hat-dual)..."
     if ! make -C "$src" -f Makefile.STM32FX mmdvm-hs-hat-dual; then
         print_error "Firmware build failed"
@@ -484,12 +489,12 @@ install_dvmhost() {
     # Cleanup
     rm -rf "$temp_dir"
 
-    # Verify the binary works
-    if /opt/centrunk/dvmhost/dvmhost --version 2>/dev/null || /opt/centrunk/dvmhost/dvmhost -h 2>/dev/null; then
-        print_status "DVMHost binary verified successfully"
-    else
-        print_warning "Could not verify DVMHost binary (this may be normal)"
-    fi
+    # # Verify the binary works
+    # if /opt/centrunk/dvmhost/dvmhost --version 2>/dev/null || /opt/centrunk/dvmhost/dvmhost -h 2>/dev/null; then
+    #     print_status "DVMHost binary verified successfully"
+    # else
+    #     print_warning "Could not verify DVMHost binary (this may be normal)"
+    # fi
 }
 
 # Install systemd services
