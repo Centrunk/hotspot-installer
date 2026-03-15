@@ -371,8 +371,7 @@ disable_bluetooth() {
     local config_file=""
     if [[ -f /boot/firmware/config.txt ]]; then
         config_file="/boot/firmware/config.txt"
-    fi
-    if [[ -f /boot/config.txt ]]; then
+    elif [[ -f /boot/config.txt ]]; then
         config_file="/boot/config.txt"
     fi
     
