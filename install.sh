@@ -711,7 +711,8 @@ setup_device_config() {
     NETBIRD_SETUP_KEY=$(grep -i 'X-Netbird-Setup-Key' "$tmp_headers" 2>/dev/null | cut -d' ' -f2 | tr -d '\r\n' || true)
     rm -f "$tmp_headers"
 
-    # 5. Extract to config directory
+    # 5. Clear existing configs and extract new ones
+    rm -rf /opt/centrunk/configs/*
     if ! unzip -o "$tmp_zip" -d /opt/centrunk/configs/; then
         print_error "Failed to extract configuration files"
         rm -f "$tmp_zip"
@@ -791,7 +792,7 @@ install_services() {
         ["configCC.yml"]="centrunk.cc.service"
         ["configVC.yml"]="centrunk.vc.service"
         ["configDVRS.yml"]="centrunk.dvrs.service"
-        ["configCONV.yml"]="centrunk.conv.service"
+        ["configCONVENTIONAL.yml"]="centrunk.conv.service"
     )
 
     # Determine which services to install based on configs present
