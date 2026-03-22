@@ -236,7 +236,7 @@ check_platform() {
             print_error "Use --skip-platform-check to bypass this check"
             exit 1
         fi
-        read -p "Continue anyway? (y/N) " -n 1 -r
+        read -p "Continue anyway? (y/N) " -n 1 -r < /dev/tty
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             exit 1
@@ -547,7 +547,7 @@ setup_device_config() {
     # Always confirm before overwriting existing configs
     if [[ -f /opt/centrunk/configs/configCC.yml || -f /opt/centrunk/configs/configVC.yml ]]; then
         print_warning "Config files already exist in /opt/centrunk/configs/"
-        read -p "Overwrite existing configuration with new download from myCTRS? (y/N) " -n 1 -r
+        read -p "Overwrite existing configuration with new download from myCTRS? (y/N) " -n 1 -r < /dev/tty
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             print_status "Keeping existing configuration"
