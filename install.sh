@@ -66,11 +66,6 @@ STATUS_PERMISSIONS=""
 # When run via `sudo`, SUDO_USER is the original user; fall back to $USER.
 REAL_USER="${SUDO_USER:-$USER}"
 
-# Detect if running from a pipe (non-interactive)
-if [[ ! -t 0 ]]; then
-    NON_INTERACTIVE=true
-fi
-
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
