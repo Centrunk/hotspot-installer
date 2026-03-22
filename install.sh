@@ -9,6 +9,8 @@
 #     --skip-services        Skip systemd service installation
 #     --skip-firmware-build  Skip firmware compilation
 #     --skip-platform-check  Skip platform verification (for testing)
+#     --skip-device-setup    Skip device authorization config provisioning
+#     --ctrs-url <url>       CTRS server URL (default: https://my.centrunk.net)
 #     -y, --yes              Non-interactive mode (assume yes to prompts)
 #     --help                 Show this help message
 #
@@ -30,12 +32,17 @@ DVMHOST_BINS_REPO="https://github.com/Centrunk/dvmbins/raw/master"
 # Installer repo (for downloading service files, etc. when running via pipe)
 INSTALLER_REPO_RAW="https://raw.githubusercontent.com/Centrunk/hotspot-installer/main"
 
+# CTRS server URL (for device authorization flow)
+CTRS_URL="${CTRS_URL:-https://my.centrunk.net}"
+
 # Default options
 SKIP_NETBIRD=false
 SKIP_SERVICES=false
 SKIP_FIRMWARE_BUILD=false
 SKIP_PLATFORM_CHECK=false
+SKIP_DEVICE_SETUP=false
 NON_INTERACTIVE=false
+DEVICE_SETUP_COMPLETED=false
 
 # Determine the real (non-root) user who invoked this script.
 # When run via `sudo`, SUDO_USER is the original user; fall back to $USER.
@@ -65,6 +72,14 @@ while [[ $# -gt 0 ]]; do
             SKIP_PLATFORM_CHECK=true
             shift
             ;;
+        --skip-device-setup)
+            SKIP_DEVICE_SETUP=true
+            shift
+            ;;
+        --ctrs-url)
+            CTRS_URL="$2"
+            shift 2
+            ;;
         -y|--yes)
             NON_INTERACTIVE=true
             shift
@@ -79,6 +94,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --skip-services        Skip systemd service installation"
             echo "  --skip-firmware-build  Skip firmware compilation"
             echo "  --skip-platform-check  Skip platform verification (for testing)"
+            echo "  --skip-device-setup    Skip device authorization config provisioning"
+            echo "  --ctrs-url <url>       CTRS server URL (default: https://my.centrunk.net)"
             echo "  -y, --yes              Non-interactive mode (assume yes to prompts)"
             echo "  --help                 Show this help message"
             echo ""
@@ -239,6 +256,8 @@ install_prerequisites() {
         git \
         curl \
         wget \
+        jq \
+        unzip \
         xz-utils \
         stm32flash \
         make \
@@ -499,6 +518,112 @@ install_dvmhost() {
     # fi
 }
 
+# Device authorization flow — register, display code, poll, download config
+setup_device_config() {
+    if [[ "$SKIP_DEVICE_SETUP" == "true" ]]; then
+        print_warning "Skipping device config setup (--skip-device-setup flag)"
+        return
+    fi
+
+    # Skip if configs already exist
+    if [[ -f /opt/centrunk/configs/configCC.yml && -f /opt/centrunk/configs/configVC.yml ]]; then
+        print_warning "Config files already exist in /opt/centrunk/configs/ - skipping device setup"
+        return
+    fi
+
+    print_status "Starting device authorization flow..."
+    print_status "CTRS server: ${CTRS_URL}"
+
+    # 1. Register
+    local register_response
+    if ! register_response=$(curl -sf -X POST "${CTRS_URL}/api/device/register/"); then
+        print_error "Failed to register device with ${CTRS_URL}/api/device/register/"
+        exit 1
+    fi
+
+    local user_code device_secret verify_url poll_interval
+    user_code=$(echo "$register_response" | jq -r '.user_code')
+    device_secret=$(echo "$register_response" | jq -r '.device_secret')
+    verify_url=$(echo "$register_response" | jq -r '.verification_url_complete')
+    poll_interval=$(echo "$register_response" | jq -r '.poll_interval // 5')
+
+    if [[ -z "$user_code" || "$user_code" == "null" ]]; then
+        print_error "Invalid response from device registration"
+        exit 1
+    fi
+
+    # 2. Display code and URL
+    echo ""
+    echo "======================================================"
+    echo -e "  ${GREEN}DEVICE CODE:${NC}  ${YELLOW}${user_code}${NC}"
+    echo ""
+    echo -e "  Open this URL in a browser to authorize this device:"
+    echo -e "  ${GREEN}${verify_url}${NC}"
+    echo "======================================================"
+    echo ""
+    print_status "Waiting for authorization (code expires in 15 minutes)..."
+
+    # 3. Poll until authorized
+    while true; do
+        local status
+        if ! status=$(curl -sf \
+            -H "Authorization: Bearer ${device_secret}" \
+            "${CTRS_URL}/api/device/poll/${user_code}/" \
+            | jq -r '.status'); then
+            print_error "Failed to poll device status"
+            exit 1
+        fi
+
+        case "$status" in
+            authorized)
+                print_status "Device authorized! Downloading configuration..."
+                break
+                ;;
+            expired)
+                print_error "Device code expired. Please re-run the installer."
+                exit 1
+                ;;
+            consumed)
+                print_error "Configuration was already downloaded. Please re-run the installer to get a new code."
+                exit 1
+                ;;
+            pending)
+                sleep "$poll_interval"
+                ;;
+            *)
+                print_error "Unexpected status from server: $status"
+                exit 1
+                ;;
+        esac
+    done
+
+    # 4. Download config ZIP
+    local tmp_zip
+    tmp_zip=$(mktemp /tmp/ctrs_config_XXXXXX.zip)
+
+    if ! curl -sf \
+        -H "Authorization: Bearer ${device_secret}" \
+        "${CTRS_URL}/api/device/download/${user_code}/" \
+        -o "$tmp_zip"; then
+        print_error "Failed to download configuration"
+        rm -f "$tmp_zip"
+        exit 1
+    fi
+
+    # 5. Extract to config directory
+    if ! unzip -o "$tmp_zip" -d /opt/centrunk/configs/; then
+        print_error "Failed to extract configuration files"
+        rm -f "$tmp_zip"
+        exit 1
+    fi
+
+    # 6. Cleanup
+    rm -f "$tmp_zip"
+
+    DEVICE_SETUP_COMPLETED=true
+    print_status "Configuration files installed to /opt/centrunk/configs/"
+}
+
 # Install systemd services
 install_services() {
     if [[ "$SKIP_SERVICES" == "true" ]]; then
@@ -569,25 +694,35 @@ print_summary() {
     echo "  - centrunk.vc.service (Voice Channel)"
     echo ""
     echo "Next steps:"
-    echo "  1. Create your configuration files:"
-    echo "     - /opt/centrunk/configs/configCC.yml"
-    echo "     - /opt/centrunk/configs/configVC.yml"
+    local step=1
+
+    if [[ "$DEVICE_SETUP_COMPLETED" == "true" ]]; then
+        echo -e "  ${step}. ${GREEN}Configuration files provisioned successfully${NC}"
+        echo "     Location: /opt/centrunk/configs/"
+    else
+        echo "  ${step}. Create your configuration files:"
+        echo "     - /opt/centrunk/configs/configCC.yml"
+        echo "     - /opt/centrunk/configs/configVC.yml"
+    fi
+    step=$((step + 1))
     echo ""
-    echo "  2. Start the services:"
+    echo "  ${step}. Start the services:"
     echo "     sudo systemctl start centrunk.cc.service"
     echo "     sudo systemctl start centrunk.vc.service"
+    step=$((step + 1))
     echo ""
-    echo "  3. Check service status:"
+    echo "  ${step}. Check service status:"
     echo "     sudo systemctl status centrunk.cc.service"
     echo "     sudo systemctl status centrunk.vc.service"
+    step=$((step + 1))
     echo ""
     if [[ "$SKIP_NETBIRD" != "true" ]]; then
         if [[ "${NETBIRD_ALREADY_RUNNING:-false}" == "true" ]]; then
-            echo "  4. Netbird Status:"
+            echo "  ${step}. Netbird Status:"
             echo "     Netbird was already running on this system"
             echo "     No configuration needed - using existing setup"
         else
-            echo "  4. Configure Netbird (using the correct hostname):"
+            echo "  ${step}. Configure Netbird (using the correct hostname):"
             echo "     sudo netbird up --management-url https://netbird.centrunk.net --allow-server-ssh --setup-key C284219E-4A20-4DF3-A414-B2E507131BC4 --hostname hs-4DIGITRID-RFSS-SITE"
         fi
         echo ""
@@ -617,6 +752,7 @@ main() {
     remove_console_params
     disable_bluetooth
     install_dvmhost
+    setup_device_config
     install_services
     fix_permissions
     print_summary

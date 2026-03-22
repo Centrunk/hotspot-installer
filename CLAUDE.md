@@ -30,7 +30,7 @@ TODO.md                  # Project backlog
 ### Installation Flow (in order)
 1. `check_root` - Must run as root
 2. `check_platform` - Verify Pi OS Bookworm/Trixie 64-bit (skippable)
-3. `install_prerequisites` - apt packages: git, curl, wget, xz-utils, stm32flash, make, gcc-arm-none-eabi, binutils-arm-none-eabi, libnewlib-arm-none-eabi
+3. `install_prerequisites` - apt packages: git, curl, wget, jq, unzip, xz-utils, stm32flash, make, gcc-arm-none-eabi, binutils-arm-none-eabi, libnewlib-arm-none-eabi
 4. `install_netbird` - VPN client via `pkgs.netbird.io/install.sh` (skips if already running)
 5. `create_directories` - `/opt/centrunk/{dvmhost,configs}`, `/var/log/centrunk/`
 6. `clone_firmware` - Clone `DVMProject/dvmfirmware-hs` to `/opt/centrunk/dvmfirmware-hs`
@@ -38,14 +38,17 @@ TODO.md                  # Project backlog
 8. `remove_console_params` - Strip `console=` params from boot cmdline
 9. `disable_bluetooth` - Pi model-specific dtoverlay config, disable/mask BT and serial services
 10. `install_dvmhost` - Download pre-built binary from `Centrunk/dvmbins` (arch-specific `.tar.xz`)
-11. `install_services` - Download systemd units from this repo's raw GitHub URL, enable (don't start)
-12. `print_summary` - Show next steps including Netbird setup key and reboot reminder
+11. `setup_device_config` - Device authorization flow: register with CTRS server, display code, poll for authorization, download and extract config ZIP to `/opt/centrunk/configs/`
+12. `install_services` - Download systemd units from this repo's raw GitHub URL, enable (don't start)
+13. `print_summary` - Show next steps including Netbird setup key and reboot reminder
 
 ### CLI Options
 - `--skip-netbird` - Skip VPN installation
 - `--skip-services` - Skip systemd service setup
 - `--skip-firmware-build` - Skip firmware compilation
 - `--skip-platform-check` - Bypass platform verification (for testing)
+- `--skip-device-setup` - Skip device authorization config provisioning
+- `--ctrs-url <url>` - CTRS server URL (default: `https://my.centrunk.net`); also settable via `CTRS_URL` env var
 - `-y` / `--yes` - Non-interactive mode (auto-detected when piped)
 - `--help` - Show usage
 
