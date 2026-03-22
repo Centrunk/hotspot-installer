@@ -37,6 +37,10 @@ SKIP_FIRMWARE_BUILD=false
 SKIP_PLATFORM_CHECK=false
 NON_INTERACTIVE=false
 
+# Determine the real (non-root) user who invoked this script.
+# When run via `sudo`, SUDO_USER is the original user; fall back to $USER.
+REAL_USER="${SUDO_USER:-$USER}"
+
 # Detect if running from a pipe (non-interactive)
 if [[ ! -t 0 ]]; then
     NON_INTERACTIVE=true
@@ -534,6 +538,19 @@ install_services() {
     print_warning "Services are NOT started - please configure /opt/centrunk/configs/configCC.yml and configVC.yml first"
 }
 
+# Fix ownership of /opt/centrunk so the original user can read/write files
+# (e.g. to drop configs in via SFTP without needing root)
+fix_permissions() {
+    if [[ "$REAL_USER" == "root" ]]; then
+        print_warning "Running as root without sudo - skipping /opt/centrunk ownership change"
+        return
+    fi
+
+    print_status "Setting ownership of /opt/centrunk to ${REAL_USER}..."
+    chown -R "${REAL_USER}:" /opt/centrunk
+    print_status "Ownership of /opt/centrunk set to ${REAL_USER}"
+}
+
 # Print installation summary
 print_summary() {
     echo ""
@@ -601,6 +618,7 @@ main() {
     disable_bluetooth
     install_dvmhost
     install_services
+    fix_permissions
     print_summary
 }
 
