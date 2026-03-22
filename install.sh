@@ -44,6 +44,8 @@ SKIP_DEVICE_SETUP=false
 NON_INTERACTIVE=false
 DEVICE_SETUP_COMPLETED=false
 FIRMWARE_CHANGED=true
+NETBIRD_SETUP_KEY=""
+NETBIRD_AUTO_CONNECTED=false
 
 # Determine the real (non-root) user who invoked this script.
 # When run via `sudo`, SUDO_USER is the original user; fall back to $USER.
@@ -276,21 +278,19 @@ install_netbird() {
         return
     fi
 
-    # Check if Netbird is already running
+    # Track whether NetBird was already running before we touched it
     if systemctl is-active --quiet netbird 2>/dev/null || pgrep -x netbird >/dev/null 2>&1; then
-        print_status "Netbird is already running - skipping installation"
         NETBIRD_ALREADY_RUNNING=true
-        return
     fi
 
-    if [ ! "$NETBIRD_ALREADY_RUNNING" ]; then
-      print_status "Installing Netbird..."
-      curl -fsSL https://pkgs.netbird.io/install.sh | sh
+    # Always ensure the binary is installed (idempotent — installer handles upgrades)
+    if ! command -v netbird &>/dev/null; then
+        print_status "Installing Netbird..."
+        curl -fsSL https://pkgs.netbird.io/install.sh | sh
+        print_status "Netbird installed successfully"
+    else
+        print_status "Netbird binary already installed"
     fi
-
-
-    print_status "Netbird installed successfully"
-    NETBIRD_ALREADY_RUNNING=false
 }
 
 # Create directory structure
@@ -622,18 +622,24 @@ setup_device_config() {
         esac
     done
 
-    # 4. Download config ZIP
-    local tmp_zip
+    # 4. Download config ZIP (capture headers for NetBird setup key)
+    local tmp_zip tmp_headers
     tmp_zip=$(mktemp /tmp/ctrs_config_XXXXXX.zip)
+    tmp_headers=$(mktemp /tmp/ctrs_headers_XXXXXX)
 
     if ! curl -sf \
         -H "Authorization: Bearer ${device_secret}" \
         "${CTRS_URL}/api/device/download/${user_code}/" \
+        -D "$tmp_headers" \
         -o "$tmp_zip"; then
         print_error "Failed to download configuration"
-        rm -f "$tmp_zip"
+        rm -f "$tmp_zip" "$tmp_headers"
         exit 1
     fi
+
+    # Extract NetBird setup key if present in response headers
+    NETBIRD_SETUP_KEY=$(grep -i 'X-Netbird-Setup-Key' "$tmp_headers" 2>/dev/null | cut -d' ' -f2 | tr -d '\r\n' || true)
+    rm -f "$tmp_headers"
 
     # 5. Extract to config directory
     if ! unzip -o "$tmp_zip" -d /opt/centrunk/configs/; then
@@ -647,6 +653,40 @@ setup_device_config() {
 
     DEVICE_SETUP_COMPLETED=true
     print_status "Configuration files installed to /opt/centrunk/configs/"
+}
+
+# Connect to NetBird VPN using setup key from CTRS device flow
+connect_netbird() {
+    if [[ "$SKIP_NETBIRD" == "true" ]]; then
+        return
+    fi
+
+    if [[ -z "${NETBIRD_SETUP_KEY:-}" ]]; then
+        return
+    fi
+
+    # Tear down existing NetBird connection and config so the new key takes effect
+    if systemctl is-active --quiet netbird 2>/dev/null || pgrep -x netbird >/dev/null 2>&1; then
+        print_status "Stopping existing NetBird connection..."
+        netbird down 2>/dev/null || true
+    fi
+
+    # Remove existing NetBird config so the new setup key is accepted cleanly
+    if [[ -f /etc/netbird/config.json ]]; then
+        print_status "Removing existing NetBird configuration..."
+        rm -f /etc/netbird/config.json
+    fi
+
+    print_status "NetBird setup key received from CTRS, joining VPN..."
+    if netbird up \
+        --management-url https://netbird.centrunk.net \
+        --allow-server-ssh \
+        --setup-key "$NETBIRD_SETUP_KEY"; then
+        print_status "NetBird connected successfully"
+        NETBIRD_AUTO_CONNECTED=true
+    else
+        print_warning "NetBird connection failed - you can retry manually after reboot"
+    fi
 }
 
 # Install systemd services
@@ -742,13 +782,20 @@ print_summary() {
     step=$((step + 1))
     echo ""
     if [[ "$SKIP_NETBIRD" != "true" ]]; then
-        if [[ "${NETBIRD_ALREADY_RUNNING:-false}" == "true" ]]; then
+        if [[ "${NETBIRD_AUTO_CONNECTED}" == "true" ]]; then
+            echo "  ${step}. Netbird Status:"
+            echo "     Netbird connected automatically using CTRS setup key"
+        elif [[ -n "${NETBIRD_SETUP_KEY:-}" ]]; then
+            echo "  ${step}. Connect Netbird (auto-connect failed, retry manually):"
+            echo "     sudo netbird up --management-url https://netbird.centrunk.net --allow-server-ssh --setup-key ${NETBIRD_SETUP_KEY}"
+        elif [[ "${NETBIRD_ALREADY_RUNNING:-false}" == "true" ]]; then
             echo "  ${step}. Netbird Status:"
             echo "     Netbird was already running on this system"
             echo "     No configuration needed - using existing setup"
         else
-            echo "  ${step}. Configure Netbird (using the correct hostname):"
-            echo "     sudo netbird up --management-url https://netbird.centrunk.net --allow-server-ssh --setup-key C284219E-4A20-4DF3-A414-B2E507131BC4 --hostname hs-4DIGITRID-RFSS-SITE"
+            echo "  ${step}. Configure Netbird:"
+            echo "     A setup key will be provided when you run device setup."
+            echo "     Re-run this installer without --skip-device-setup to get one."
         fi
         echo ""
     fi
@@ -778,6 +825,7 @@ main() {
     disable_bluetooth
     install_dvmhost
     setup_device_config
+    connect_netbird
     install_services
     fix_permissions
     print_summary
