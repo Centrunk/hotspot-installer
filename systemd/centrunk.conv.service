@@ -1,0 +1,13 @@
+[Unit]
+Description=Centrunk P25 Conventional Service
+After=syslog.target network.target
+
+[Service]
+User=root
+Type=forking
+ExecStart=/opt/centrunk/dvmhost/dvmhost -c /opt/centrunk/configs/configCONV.yml
+Restart=on-abnormal
+TimeoutSec=infinity
+
+[Install]
+WantedBy=multi-user.target

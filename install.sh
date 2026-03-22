@@ -698,10 +698,41 @@ install_services() {
 
     print_status "Installing systemd services..."
 
+    # Stop, disable, and remove all existing centrunk services
+    for svc_file in /etc/systemd/system/centrunk.*.service; do
+        [[ -e "$svc_file" ]] || continue
+        local svc_name
+        svc_name=$(basename "$svc_file")
+        print_status "Removing existing ${svc_name}..."
+        systemctl stop "$svc_name" 2>/dev/null || true
+        systemctl disable "$svc_name" 2>/dev/null || true
+        rm -f "$svc_file"
+    done
+    systemctl daemon-reload
+
+    # Map config files to their corresponding service units
+    local -A config_to_service=(
+        ["configCC.yml"]="centrunk.cc.service"
+        ["configVC.yml"]="centrunk.vc.service"
+        ["configDVRS.yml"]="centrunk.dvrs.service"
+        ["configCONV.yml"]="centrunk.conv.service"
+    )
+
+    # Determine which services to install based on configs present
+    local services=()
+    for config in "${!config_to_service[@]}"; do
+        if [[ -f "/opt/centrunk/configs/${config}" ]]; then
+            services+=("${config_to_service[$config]}")
+        fi
+    done
+
+    if [[ ${#services[@]} -eq 0 ]]; then
+        print_warning "No config files found in /opt/centrunk/configs/ — skipping service installation"
+        return
+    fi
+
     local tmp_dir
     tmp_dir=$(mktemp -d)
-
-    local services=("centrunk.cc.service" "centrunk.vc.service")
 
     for svc in "${services[@]}"; do
         local url="${INSTALLER_REPO_RAW}/systemd/${svc}"
@@ -717,15 +748,14 @@ install_services() {
 
     rm -rf "$tmp_dir"
 
-    # Reload systemd
+    # Reload systemd and enable+start services
     systemctl daemon-reload
 
-    # Enable services (but don't start - configs needed first)
-    systemctl enable centrunk.cc.service 2>/dev/null || true
-    systemctl enable centrunk.vc.service 2>/dev/null || true
+    for svc in "${services[@]}"; do
+        systemctl enable --now "$svc" 2>/dev/null || true
+    done
 
-    print_status "Systemd services installed and enabled"
-    print_warning "Services are NOT started - please configure /opt/centrunk/configs/configCC.yml and configVC.yml first"
+    print_status "Systemd services installed, enabled, and started"
 }
 
 # Fix ownership of /opt/centrunk so the original user can read/write files
