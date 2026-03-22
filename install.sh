@@ -354,13 +354,12 @@ build_firmware() {
 # Remove console parameters from boot cmdline
 remove_console_params() {
     local modified=false
-    for cmdline_file in /boot/cmdline.txt /boot/firmware/cmdline.txt; do
-        if [[ -f "$cmdline_file" ]] && grep -q "console=" "$cmdline_file"; then
-            cp "$cmdline_file" "${cmdline_file}.backup"
-            sed -i 's/console=[^ ]*//g; s/  */ /g; s/^ //; s/ $//' "$cmdline_file"
-            modified=true
-        fi
-    done
+    local cmdline_file="/boot/firmware/cmdline.txt"
+    if [[ -f "$cmdline_file" ]] && grep -q "console=" "$cmdline_file"; then
+        cp "$cmdline_file" "${cmdline_file}.backup"
+        sed -i 's/console=[^ ]*//g; s/  */ /g; s/^ //; s/ $//' "$cmdline_file"
+        modified=true
+    fi
     if [[ "$modified" == "true" ]]; then
         print_warning "Boot cmdline modified - reboot required"
     fi
@@ -368,14 +367,8 @@ remove_console_params() {
 
 # Disable Bluetooth to free up ttyAMA0
 disable_bluetooth() {
-    local config_file=""
-    if [[ -f /boot/firmware/config.txt ]]; then
-        config_file="/boot/firmware/config.txt"
-    elif [[ -f /boot/config.txt ]]; then
-        config_file="/boot/config.txt"
-    fi
-    
-    if [[ -z "$config_file" ]]; then
+    local config_file="/boot/firmware/config.txt"
+    if [[ ! -f "$config_file" ]]; then
         print_warning "No config.txt found - skipping Bluetooth disable"
         return
     fi
