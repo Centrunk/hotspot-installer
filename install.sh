@@ -43,6 +43,7 @@ SKIP_PLATFORM_CHECK=false
 SKIP_DEVICE_SETUP=false
 NON_INTERACTIVE=false
 DEVICE_SETUP_COMPLETED=false
+FIRMWARE_CHANGED=true
 
 # Determine the real (non-root) user who invoked this script.
 # When run via `sudo`, SUDO_USER is the original user; fall back to $USER.
@@ -335,7 +336,19 @@ clone_firmware() {
 
     if [[ -d "$dest" ]]; then
         print_warning "$dest already exists - pulling latest changes"
-        git -C "$dest" pull --recurse-submodules || print_warning "git pull failed - continuing with existing checkout"
+        local pull_output
+        if pull_output=$(git -C "$dest" pull --recurse-submodules 2>&1); then
+            if echo "$pull_output" | grep -q "Already up to date"; then
+                print_status "Firmware source already up to date"
+                FIRMWARE_CHANGED=false
+            else
+                print_status "Firmware source updated"
+                FIRMWARE_CHANGED=true
+            fi
+        else
+            print_warning "git pull failed - continuing with existing checkout"
+            FIRMWARE_CHANGED=true
+        fi
         return
     fi
 
@@ -344,6 +357,7 @@ clone_firmware() {
         print_error "Failed to clone dvmfirmware-hs"
         exit 1
     fi
+    FIRMWARE_CHANGED=true
     print_status "dvmfirmware-hs cloned to $dest"
 }
 
@@ -351,6 +365,11 @@ clone_firmware() {
 build_firmware() {
     if [[ "$SKIP_FIRMWARE_BUILD" == "true" ]]; then
         print_warning "Skipping firmware build (--skip-firmware-build flag)"
+        return
+    fi
+
+    if [[ "$FIRMWARE_CHANGED" != "true" ]]; then
+        print_status "Firmware source unchanged - skipping rebuild"
         return
     fi
 
