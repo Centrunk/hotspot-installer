@@ -548,14 +548,14 @@ setup_device_config() {
     if [[ -f /opt/centrunk/configs/configCC.yml || -f /opt/centrunk/configs/configVC.yml ]]; then
         print_warning "Config files already exist in /opt/centrunk/configs/"
         if [[ "$NON_INTERACTIVE" == "true" ]]; then
-            print_warning "Non-interactive mode: skipping device setup to preserve existing configs"
-            return
-        fi
-        read -p "Overwrite existing configuration with new download from myCTRS? (y/N) " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            print_status "Keeping existing configuration"
-            return
+            print_warning "Non-interactive mode: overwriting existing configs"
+        else
+            read -p "Overwrite existing configuration with new download from myCTRS? (y/N) " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                print_status "Keeping existing configuration"
+                return
+            fi
         fi
         print_warning "Existing configs will be overwritten"
     fi
