@@ -47,6 +47,21 @@ FIRMWARE_CHANGED=true
 NETBIRD_SETUP_KEY=""
 NETBIRD_AUTO_CONNECTED=false
 
+# Step result tracking (set by each function, read by print_summary)
+STATUS_PLATFORM=""
+STATUS_PREREQUISITES=""
+STATUS_NETBIRD_INSTALL=""
+STATUS_DIRECTORIES=""
+STATUS_FIRMWARE_CLONE=""
+STATUS_FIRMWARE_BUILD=""
+STATUS_CONSOLE_PARAMS=""
+STATUS_BLUETOOTH=""
+STATUS_DVMHOST=""
+STATUS_DEVICE_SETUP=""
+STATUS_NETBIRD_CONNECT=""
+STATUS_SERVICES=""
+STATUS_PERMISSIONS=""
+
 # Determine the real (non-root) user who invoked this script.
 # When run via `sudo`, SUDO_USER is the original user; fall back to $USER.
 REAL_USER="${SUDO_USER:-$USER}"
@@ -156,10 +171,45 @@ check_root() {
     fi
 }
 
+# Detect and stop any running Centrunk services before installation
+stop_running_services() {
+    local active_services
+    active_services=$(systemctl list-units 'centrunk.*.service' --state=active --no-legend --no-pager 2>/dev/null | awk '{print $1}')
+
+    if [[ -z "$active_services" ]]; then
+        return
+    fi
+
+    print_warning "The following Centrunk services are currently running:"
+    local svc
+    for svc in $active_services; do
+        echo -e "  ${YELLOW}-${NC} ${svc}"
+    done
+    echo ""
+
+    if [[ "$NON_INTERACTIVE" != "true" ]]; then
+        read -p "Stop these services and continue installation? (y/N) " -n 1 -r < /dev/tty
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            print_error "Cannot continue while services are running"
+            exit 1
+        fi
+    else
+        print_status "Non-interactive mode: stopping services automatically"
+    fi
+
+    for svc in $active_services; do
+        print_status "Stopping ${svc}..."
+        systemctl stop "$svc" 2>/dev/null || true
+    done
+    print_status "All Centrunk services stopped"
+}
+
 # Verify platform and architecture requirements
 check_platform() {
     if [[ "$SKIP_PLATFORM_CHECK" == "true" ]]; then
         print_warning "Skipping platform verification (--skip-platform-check flag)"
+        STATUS_PLATFORM="skipped"
         return
     fi
     
@@ -244,8 +294,10 @@ check_platform() {
             exit 1
         fi
         print_warning "Continuing despite platform mismatch - this may cause issues!"
+        STATUS_PLATFORM="overridden"
     else
         print_status "Platform verification passed!"
+        STATUS_PLATFORM="passed"
     fi
 }
 
@@ -269,12 +321,14 @@ install_prerequisites() {
         libnewlib-arm-none-eabi
 
     print_status "Prerequisites installed successfully"
+    STATUS_PREREQUISITES="done"
 }
 
 # Install Netbird
 install_netbird() {
     if [[ "$SKIP_NETBIRD" == "true" ]]; then
         print_warning "Skipping Netbird installation (--skip-netbird flag)"
+        STATUS_NETBIRD_INSTALL="skipped"
         return
     fi
 
@@ -288,8 +342,10 @@ install_netbird() {
         print_status "Installing Netbird..."
         curl -fsSL https://pkgs.netbird.io/install.sh | sh
         print_status "Netbird installed successfully"
+        STATUS_NETBIRD_INSTALL="installed"
     else
         print_status "Netbird binary already installed"
+        STATUS_NETBIRD_INSTALL="already installed"
     fi
 }
 
@@ -328,6 +384,8 @@ create_directories() {
     else
         print_warning "/opt/centrunk/dvmhost already exists"
     fi
+
+    STATUS_DIRECTORIES="done"
 }
 
 # Clone DVMProject firmware source
@@ -341,13 +399,16 @@ clone_firmware() {
             if echo "$pull_output" | grep -q "Already up to date"; then
                 print_status "Firmware source already up to date"
                 FIRMWARE_CHANGED=false
+                STATUS_FIRMWARE_CLONE="already up to date"
             else
                 print_status "Firmware source updated"
                 FIRMWARE_CHANGED=true
+                STATUS_FIRMWARE_CLONE="updated"
             fi
         else
             print_warning "git pull failed - continuing with existing checkout"
             FIRMWARE_CHANGED=true
+            STATUS_FIRMWARE_CLONE="pull failed, using existing"
         fi
         return
     fi
@@ -358,6 +419,7 @@ clone_firmware() {
         exit 1
     fi
     FIRMWARE_CHANGED=true
+    STATUS_FIRMWARE_CLONE="cloned"
     print_status "dvmfirmware-hs cloned to $dest"
 }
 
@@ -365,11 +427,13 @@ clone_firmware() {
 build_firmware() {
     if [[ "$SKIP_FIRMWARE_BUILD" == "true" ]]; then
         print_warning "Skipping firmware build (--skip-firmware-build flag)"
+        STATUS_FIRMWARE_BUILD="skipped"
         return
     fi
 
     if [[ "$FIRMWARE_CHANGED" != "true" ]]; then
         print_status "Firmware source unchanged - skipping rebuild"
+        STATUS_FIRMWARE_BUILD="skipped (source unchanged)"
         return
     fi
 
@@ -391,6 +455,7 @@ build_firmware() {
         exit 1
     fi
     print_status "Firmware build complete"
+    STATUS_FIRMWARE_BUILD="built"
 }
 
 # Remove console parameters from boot cmdline
@@ -404,6 +469,9 @@ remove_console_params() {
     fi
     if [[ "$modified" == "true" ]]; then
         print_warning "Boot cmdline modified - reboot required"
+        STATUS_CONSOLE_PARAMS="cleaned"
+    else
+        STATUS_CONSOLE_PARAMS="not needed"
     fi
 }
 
@@ -412,9 +480,10 @@ disable_bluetooth() {
     local config_file="/boot/firmware/config.txt"
     if [[ ! -f "$config_file" ]]; then
         print_warning "No config.txt found - skipping Bluetooth disable"
+        STATUS_BLUETOOTH="skipped (no config.txt)"
         return
     fi
-    
+
     # Detect Pi model
     local pi_model=""
     if [[ -f /proc/device-tree/model ]]; then
@@ -431,6 +500,7 @@ disable_bluetooth() {
     
     if [[ -z "$pi_model" ]]; then
         print_warning "Could not detect Pi model - skipping Bluetooth configuration"
+        STATUS_BLUETOOTH="skipped (unknown model)"
         return
     fi
     
@@ -480,6 +550,7 @@ disable_bluetooth() {
     print_status "Disabled and masked serial/bluetooth services"
 
     print_warning "UART configuration updated - reboot required"
+    STATUS_BLUETOOTH="configured (${pi_model})"
 }
 
 # Download and install dvmhost binary
@@ -511,6 +582,7 @@ install_dvmhost() {
         cp "${temp_dir}/dvmhost" /opt/centrunk/dvmhost/
         chmod +x /opt/centrunk/dvmhost/dvmhost
         print_status "DVMHost binary installed to /opt/centrunk/dvmhost/dvmhost"
+        STATUS_DVMHOST="installed"
     else
         # Try to find it in a subdirectory
         local found_binary
@@ -519,6 +591,7 @@ install_dvmhost() {
             cp "$found_binary" /opt/centrunk/dvmhost/
             chmod +x /opt/centrunk/dvmhost/dvmhost
             print_status "DVMHost binary installed to /opt/centrunk/dvmhost/dvmhost"
+            STATUS_DVMHOST="installed"
         else
             print_error "dvmhost binary not found in archive"
             rm -rf "$temp_dir"
@@ -541,6 +614,7 @@ install_dvmhost() {
 setup_device_config() {
     if [[ "$SKIP_DEVICE_SETUP" == "true" ]]; then
         print_warning "Skipping device config setup (--skip-device-setup flag)"
+        STATUS_DEVICE_SETUP="skipped"
         return
     fi
 
@@ -551,6 +625,7 @@ setup_device_config() {
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             print_status "Keeping existing configuration"
+            STATUS_DEVICE_SETUP="kept existing"
             return
         fi
         print_warning "Existing configs will be overwritten"
@@ -652,16 +727,19 @@ setup_device_config() {
     rm -f "$tmp_zip"
 
     DEVICE_SETUP_COMPLETED=true
+    STATUS_DEVICE_SETUP="provisioned"
     print_status "Configuration files installed to /opt/centrunk/configs/"
 }
 
 # Connect to NetBird VPN using setup key from CTRS device flow
 connect_netbird() {
     if [[ "$SKIP_NETBIRD" == "true" ]]; then
+        STATUS_NETBIRD_CONNECT="skipped"
         return
     fi
 
     if [[ -z "${NETBIRD_SETUP_KEY:-}" ]]; then
+        STATUS_NETBIRD_CONNECT="no setup key"
         return
     fi
 
@@ -684,8 +762,10 @@ connect_netbird() {
         --setup-key "$NETBIRD_SETUP_KEY"; then
         print_status "NetBird connected successfully"
         NETBIRD_AUTO_CONNECTED=true
+        STATUS_NETBIRD_CONNECT="connected"
     else
         print_warning "NetBird connection failed - you can retry manually after reboot"
+        STATUS_NETBIRD_CONNECT="failed"
     fi
 }
 
@@ -693,6 +773,7 @@ connect_netbird() {
 install_services() {
     if [[ "$SKIP_SERVICES" == "true" ]]; then
         print_warning "Skipping systemd service installation (--skip-services flag)"
+        STATUS_SERVICES="skipped"
         return
     fi
 
@@ -728,6 +809,7 @@ install_services() {
 
     if [[ ${#services[@]} -eq 0 ]]; then
         print_warning "No config files found in /opt/centrunk/configs/ — skipping service installation"
+        STATUS_SERVICES="no configs found"
         return
     fi
 
@@ -755,6 +837,7 @@ install_services() {
         systemctl enable --now "$svc" 2>/dev/null || true
     done
 
+    STATUS_SERVICES="installed (${#services[@]} services)"
     print_status "Systemd services installed, enabled, and started"
 }
 
@@ -763,72 +846,101 @@ install_services() {
 fix_permissions() {
     if [[ "$REAL_USER" == "root" ]]; then
         print_warning "Running as root without sudo - skipping /opt/centrunk ownership change"
+        STATUS_PERMISSIONS="skipped (root user)"
         return
     fi
 
     print_status "Setting ownership of /opt/centrunk to ${REAL_USER}..."
     chown -R "${REAL_USER}:" /opt/centrunk
     print_status "Ownership of /opt/centrunk set to ${REAL_USER}"
+    STATUS_PERMISSIONS="set (${REAL_USER})"
+}
+
+# Helper to print a status line with colored indicator
+# Usage: print_step "Label" "status_string"
+# Green checkmark for completed actions, yellow dash for skipped, red X for failures
+print_step() {
+    local label="$1"
+    local status="$2"
+
+    case "$status" in
+        skipped*|no\ *|not\ needed|kept\ existing)
+            printf "  ${YELLOW}[-]${NC} %-24s %s\n" "$label" "$status"
+            ;;
+        failed*|pull\ failed*)
+            printf "  ${RED}[X]${NC} %-24s %s\n" "$label" "$status"
+            ;;
+        "")
+            printf "  ${YELLOW}[-]${NC} %-24s %s\n" "$label" "n/a"
+            ;;
+        *)
+            printf "  ${GREEN}[+]${NC} %-24s %s\n" "$label" "$status"
+            ;;
+    esac
 }
 
 # Print installation summary
 print_summary() {
     echo ""
     echo "======================================"
-    echo -e "${GREEN}Installation Complete!${NC}"
+    echo -e "${GREEN}  Installation Complete!${NC}"
     echo "======================================"
     echo ""
-    echo -e "${GREEN}You may re-run this script as needed to repair your installation.${NC}"
-    echo ""
-    echo "DVMHost binary: /opt/centrunk/dvmhost/dvmhost"
-    echo "Config directory: /opt/centrunk/configs/"
-    echo "Log directory: /var/log/centrunk/"
-    echo ""
-    echo "Systemd services:"
-    echo "  - centrunk.cc.service (Control Channel)"
-    echo "  - centrunk.vc.service (Voice Channel)"
-    echo ""
-    echo "Next steps:"
-    local step=1
 
-    if [[ "$DEVICE_SETUP_COMPLETED" == "true" ]]; then
-        echo -e "  ${step}. ${GREEN}Configuration files provisioned successfully${NC}"
-        echo "     Location: /opt/centrunk/configs/"
-    else
-        echo "  ${step}. Create your configuration files:"
-        echo "     - /opt/centrunk/configs/configCC.yml"
-        echo "     - /opt/centrunk/configs/configVC.yml"
+    echo "Actions Performed:"
+    print_step "Platform check"       "$STATUS_PLATFORM"
+    print_step "Prerequisites"        "$STATUS_PREREQUISITES"
+    print_step "Netbird install"      "$STATUS_NETBIRD_INSTALL"
+    print_step "Directory structure"  "$STATUS_DIRECTORIES"
+    print_step "Firmware source"      "$STATUS_FIRMWARE_CLONE"
+    print_step "Firmware build"       "$STATUS_FIRMWARE_BUILD"
+    print_step "Console params"       "$STATUS_CONSOLE_PARAMS"
+    print_step "Bluetooth/UART"       "$STATUS_BLUETOOTH"
+    print_step "DVMHost binary"       "$STATUS_DVMHOST"
+    print_step "Device config"        "$STATUS_DEVICE_SETUP"
+    print_step "Netbird VPN"          "$STATUS_NETBIRD_CONNECT"
+    print_step "Systemd services"     "$STATUS_SERVICES"
+    print_step "File permissions"     "$STATUS_PERMISSIONS"
+    echo ""
+
+    echo "Key Paths:"
+    echo "  Binary:   /opt/centrunk/dvmhost/dvmhost"
+    echo "  Configs:  /opt/centrunk/configs/"
+    echo "  Logs:     /var/log/centrunk/"
+    echo ""
+
+    # Conditional next-steps section
+    local has_next_steps=false
+
+    if [[ "$STATUS_DEVICE_SETUP" != "provisioned" && "$STATUS_DEVICE_SETUP" != "kept existing" ]]; then
+        has_next_steps=true
     fi
-    step=$((step + 1))
-    echo ""
-    echo "  ${step}. Start the services:"
-    echo "     sudo systemctl start centrunk.cc.service"
-    echo "     sudo systemctl start centrunk.vc.service"
-    step=$((step + 1))
-    echo ""
-    echo "  ${step}. Check service status:"
-    echo "     sudo systemctl status centrunk.cc.service"
-    echo "     sudo systemctl status centrunk.vc.service"
-    step=$((step + 1))
-    echo ""
-    if [[ "$SKIP_NETBIRD" != "true" ]]; then
-        if [[ "${NETBIRD_AUTO_CONNECTED}" == "true" ]]; then
-            echo "  ${step}. Netbird Status:"
-            echo "     Netbird connected automatically using CTRS setup key"
-        elif [[ -n "${NETBIRD_SETUP_KEY:-}" ]]; then
-            echo "  ${step}. Connect Netbird (auto-connect failed, retry manually):"
-            echo "     sudo netbird up --management-url https://netbird.centrunk.net --allow-server-ssh --setup-key ${NETBIRD_SETUP_KEY}"
-        elif [[ "${NETBIRD_ALREADY_RUNNING:-false}" == "true" ]]; then
-            echo "  ${step}. Netbird Status:"
-            echo "     Netbird was already running on this system"
-            echo "     No configuration needed - using existing setup"
-        else
-            echo "  ${step}. Configure Netbird:"
-            echo "     A setup key will be provided when you run device setup."
-            echo "     Re-run this installer without --skip-device-setup to get one."
+    if [[ "$STATUS_NETBIRD_CONNECT" == "failed" && -n "${NETBIRD_SETUP_KEY:-}" ]]; then
+        has_next_steps=true
+    fi
+    if [[ "$STATUS_NETBIRD_CONNECT" == "no setup key" && "$SKIP_NETBIRD" != "true" && "${NETBIRD_ALREADY_RUNNING:-false}" != "true" ]]; then
+        has_next_steps=true
+    fi
+
+    if [[ "$has_next_steps" == "true" ]]; then
+        echo "Next Steps:"
+        if [[ "$STATUS_DEVICE_SETUP" != "provisioned" && "$STATUS_DEVICE_SETUP" != "kept existing" ]]; then
+            echo "  - Create your configuration files:"
+            echo "      /opt/centrunk/configs/configCC.yml"
+            echo "      /opt/centrunk/configs/configVC.yml"
+        fi
+        if [[ "$STATUS_NETBIRD_CONNECT" == "failed" && -n "${NETBIRD_SETUP_KEY:-}" ]]; then
+            echo "  - Netbird auto-connect failed. Retry manually:"
+            echo "      sudo netbird up --management-url https://netbird.centrunk.net --allow-server-ssh --setup-key ${NETBIRD_SETUP_KEY}"
+        fi
+        if [[ "$STATUS_NETBIRD_CONNECT" == "no setup key" && "$SKIP_NETBIRD" != "true" && "${NETBIRD_ALREADY_RUNNING:-false}" != "true" ]]; then
+            echo "  - Configure Netbird: re-run installer without --skip-device-setup to get a setup key"
         fi
         echo ""
     fi
+
+    echo -e "${GREEN}You may re-run this script as needed to repair your installation.${NC}"
+    echo ""
     echo -e "${RED}======================================${NC}"
     echo -e "${RED}  YOU MUST REBOOT BEFORE CONTINUING   ${NC}"
     echo -e "${RED}======================================${NC}"
@@ -846,6 +958,7 @@ main() {
 
     check_root
     check_platform
+    stop_running_services
     install_prerequisites
     install_netbird
     create_directories
