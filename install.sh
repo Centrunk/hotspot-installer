@@ -10,6 +10,7 @@
 #     --skip-firmware-build  Skip firmware compilation
 #     --skip-platform-check  Skip platform verification (for testing)
 #     --skip-device-setup    Skip device authorization config provisioning
+#     --skip-user-setup      Skip ctrs service account creation
 #     --ctrs-url <url>       CTRS server URL (default: https://my.centrunk.net)
 #     -y, --yes              Non-interactive mode (assume yes to prompts)
 #     --help                 Show this help message
@@ -41,6 +42,7 @@ SKIP_SERVICES=false
 SKIP_FIRMWARE_BUILD=false
 SKIP_PLATFORM_CHECK=false
 SKIP_DEVICE_SETUP=false
+SKIP_USER_SETUP=false
 NON_INTERACTIVE=false
 DEVICE_SETUP_COMPLETED=false
 FIRMWARE_CHANGED=true
@@ -60,6 +62,7 @@ STATUS_DVMHOST=""
 STATUS_DEVICE_SETUP=""
 STATUS_NETBIRD_CONNECT=""
 STATUS_SERVICES=""
+STATUS_USER_SETUP=""
 STATUS_PERMISSIONS=""
 
 # Determine the real (non-root) user who invoked this script.
@@ -89,6 +92,10 @@ while [[ $# -gt 0 ]]; do
             SKIP_DEVICE_SETUP=true
             shift
             ;;
+        --skip-user-setup)
+            SKIP_USER_SETUP=true
+            shift
+            ;;
         --ctrs-url)
             CTRS_URL="$2"
             shift 2
@@ -108,6 +115,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --skip-firmware-build  Skip firmware compilation"
             echo "  --skip-platform-check  Skip platform verification (for testing)"
             echo "  --skip-device-setup    Skip device authorization config provisioning"
+            echo "  --skip-user-setup      Skip ctrs service account creation"
             echo "  --ctrs-url <url>       CTRS server URL (default: https://my.centrunk.net)"
             echo "  -y, --yes              Non-interactive mode (assume yes to prompts)"
             echo "  --help                 Show this help message"
@@ -837,6 +845,117 @@ install_services() {
     print_status "Systemd services installed, enabled, and started"
 }
 
+# Create the ctrs service account for Ansible automation access.
+# Sets up: user, passwordless sudo, SSH public key, sshd Match block.
+setup_ctrs_user() {
+    if [[ "$SKIP_USER_SETUP" == "true" ]]; then
+        print_warning "Skipping ctrs user setup (--skip-user-setup)"
+        STATUS_USER_SETUP="skipped"
+        return
+    fi
+
+    print_status "Setting up ctrs service account..."
+
+    # Consent prompt
+    echo ""
+    echo "======================================"
+    echo "  Service Account Consent"
+    echo "======================================"
+    echo ""
+    echo "This script will create a user on your system with a username of 'ctrs'."
+    echo "This user will have full sudo/root access, can only log in via ssh with"
+    echo "public/private key authentication."
+    echo ""
+    echo "We use this user account for automation (such as software updates and"
+    echo "configuration changes), as well as statistics gathering."
+    echo ""
+    echo "This account will have full access to your site. We will make best effort"
+    echo "to ensure security, and we recommend putting your site in a DMZ or other"
+    echo "VLAN that does not have access to the rest of your internal network."
+    echo ""
+
+    if [[ "$NON_INTERACTIVE" == "true" ]]; then
+        print_status "Non-interactive mode: auto-accepting service account terms"
+    else
+        read -r -p "Do you accept and agree to these terms? (y/N) " response
+        if [[ ! "$response" =~ ^[Yy]$ ]]; then
+            print_warning "Service account setup declined by user"
+            STATUS_USER_SETUP="declined"
+            return
+        fi
+    fi
+
+    # 1. Create user (idempotent)
+    if id -u ctrs &>/dev/null; then
+        print_status "User 'ctrs' already exists"
+    else
+        useradd -r -m -s /bin/bash ctrs
+        print_status "Created user 'ctrs'"
+    fi
+
+    # 2. Passwordless sudo
+    local sudoers_file="/etc/sudoers.d/ctrs"
+    echo "ctrs ALL=(ALL) NOPASSWD: ALL" > "$sudoers_file"
+    chmod 0440 "$sudoers_file"
+    if visudo -cf "$sudoers_file" &>/dev/null; then
+        print_status "Configured passwordless sudo for ctrs"
+    else
+        print_error "Sudoers validation failed — removing broken file"
+        rm -f "$sudoers_file"
+        STATUS_USER_SETUP="failed (sudoers)"
+        return
+    fi
+
+    # 3. SSH authorized key
+    local ctrs_home
+    ctrs_home="$(eval echo ~ctrs)"
+    local ssh_dir="${ctrs_home}/.ssh"
+
+    mkdir -p "$ssh_dir"
+    chmod 0700 "$ssh_dir"
+
+    print_status "Downloading ctrs public key..."
+    if ! curl -fsSL "${INSTALLER_REPO_RAW}/keys/ctrs.pub" -o "${ssh_dir}/authorized_keys"; then
+        print_error "Failed to download ctrs public key"
+        STATUS_USER_SETUP="failed (key download)"
+        return
+    fi
+
+    chmod 0600 "${ssh_dir}/authorized_keys"
+    chown -R ctrs:ctrs "$ssh_dir"
+    print_status "Installed SSH authorized key for ctrs"
+
+    # 4. Lock password authentication for ctrs
+    passwd -l ctrs &>/dev/null
+    print_status "Locked password for ctrs user"
+
+    # Add sshd Match block if not already present
+    local sshd_config="/etc/ssh/sshd_config"
+    if ! grep -q "^Match User ctrs" "$sshd_config" 2>/dev/null; then
+        {
+            echo ""
+            echo "# Centrunk service account — key-only authentication"
+            echo "Match User ctrs"
+            echo "    PasswordAuthentication no"
+            echo "    AuthenticationMethods publickey"
+        } >> "$sshd_config"
+        print_status "Added sshd Match block for ctrs (key-only auth)"
+
+        # Restart sshd to apply
+        if systemctl is-active --quiet sshd 2>/dev/null; then
+            systemctl restart sshd
+            print_status "Restarted sshd"
+        elif systemctl is-active --quiet ssh 2>/dev/null; then
+            systemctl restart ssh
+            print_status "Restarted ssh"
+        fi
+    else
+        print_status "sshd Match block for ctrs already present"
+    fi
+
+    STATUS_USER_SETUP="configured"
+}
+
 # Fix ownership of /opt/centrunk so the original user can read/write files
 # (e.g. to drop configs in via SFTP without needing root)
 fix_permissions() {
@@ -896,6 +1015,7 @@ print_summary() {
     print_step "Device config"        "$STATUS_DEVICE_SETUP"
     print_step "Netbird VPN"          "$STATUS_NETBIRD_CONNECT"
     print_step "Systemd services"     "$STATUS_SERVICES"
+    print_step "Service account"      "$STATUS_USER_SETUP"
     print_step "File permissions"     "$STATUS_PERMISSIONS"
     echo ""
 
@@ -966,6 +1086,7 @@ main() {
     setup_device_config
     connect_netbird
     install_services
+    setup_ctrs_user
     fix_permissions
     print_summary
 }

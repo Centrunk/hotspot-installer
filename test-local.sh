@@ -74,12 +74,12 @@ $CONTAINER_CMD run --rm --platform linux/arm64 \
         
         echo ""
         echo "========================================"
-        echo "Running install.sh --skip-netbird --skip-services --skip-platform-check"
+        echo "Running install.sh -y --skip-netbird --skip-services --skip-platform-check"
         echo "========================================"
         echo ""
-        
+
         # Run the installer (skip platform check since this is Debian, not Pi OS)
-        /tmp/installer/install.sh --skip-netbird --skip-services --skip-platform-check
+        /tmp/installer/install.sh -y --skip-netbird --skip-services --skip-platform-check
         
         echo ""
         echo "========================================"
@@ -116,6 +116,37 @@ $CONTAINER_CMD run --rm --platform linux/arm64 \
             exit 1
         fi
         
+        # Verify ctrs service account
+        echo ""
+        echo "Checking ctrs service account..."
+        if id ctrs &>/dev/null; then
+            echo "✓ ctrs user exists"
+        else
+            echo "✗ ctrs user missing!"
+            exit 1
+        fi
+
+        if [ -f /etc/sudoers.d/ctrs ]; then
+            echo "✓ /etc/sudoers.d/ctrs exists"
+            if visudo -cf /etc/sudoers.d/ctrs &>/dev/null; then
+                echo "✓ sudoers file is valid"
+            else
+                echo "✗ sudoers file is invalid!"
+                exit 1
+            fi
+        else
+            echo "✗ /etc/sudoers.d/ctrs missing!"
+            exit 1
+        fi
+
+        ctrs_home="$(eval echo ~ctrs)"
+        if [ -f "${ctrs_home}/.ssh/authorized_keys" ]; then
+            echo "✓ authorized_keys exists"
+        else
+            echo "✗ authorized_keys missing!"
+            exit 1
+        fi
+
         # Check architecture
         echo ""
         echo "Checking binary architecture..."

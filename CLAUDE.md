@@ -14,6 +14,8 @@ test-local.sh            # Local end-to-end test using Docker/Podman + QEMU ARM6
 systemd/
   centrunk.cc.service    # Control Channel systemd unit
   centrunk.vc.service    # Voice Channel systemd unit
+keys/
+  ctrs.pub               # Public SSH key for ctrs service account (Ansible automation)
 .github/workflows/
   test-install.yml       # CI: ARM64 Pi OS test, shellcheck, x86 logic test, Discord notifications
 README.md                # User-facing documentation
@@ -40,7 +42,8 @@ TODO.md                  # Project backlog
 10. `install_dvmhost` - Download pre-built binary from `Centrunk/dvmbins` (arch-specific `.tar.xz`)
 11. `setup_device_config` - Device authorization flow: register with CTRS server, display code, poll for authorization, download and extract config ZIP to `/opt/centrunk/configs/`
 12. `install_services` - Download systemd units from this repo's raw GitHub URL, enable (don't start)
-13. `print_summary` - Show next steps including Netbird setup key and reboot reminder
+13. `setup_ctrs_user` - Create `ctrs` service account with passwordless sudo, SSH key-only auth, sshd Match block (requires user consent)
+14. `print_summary` - Show next steps including Netbird setup key and reboot reminder
 
 ### CLI Options
 - `--skip-netbird` - Skip VPN installation
@@ -48,6 +51,7 @@ TODO.md                  # Project backlog
 - `--skip-firmware-build` - Skip firmware compilation
 - `--skip-platform-check` - Bypass platform verification (for testing)
 - `--skip-device-setup` - Skip device authorization config provisioning
+- `--skip-user-setup` - Skip ctrs service account creation
 - `--ctrs-url <url>` - CTRS server URL (default: `https://my.centrunk.net`); also settable via `CTRS_URL` env var
 - `-y` / `--yes` - Non-interactive mode (auto-detected when piped)
 - `--help` - Show usage
