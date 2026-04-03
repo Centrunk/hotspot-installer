@@ -11,6 +11,7 @@
 #     --skip-platform-check  Skip platform verification (for testing)
 #     --skip-device-setup    Skip device authorization config provisioning
 #     --skip-user-setup      Skip ctrs service account creation
+#     --skip-osquery         Skip osquery endpoint monitoring installation
 #     --ctrs-url <url>       CTRS server URL (default: https://my.centrunk.net)
 #     -y, --yes              Non-interactive mode (assume yes to prompts)
 #     --help                 Show this help message
@@ -43,6 +44,7 @@ SKIP_FIRMWARE_BUILD=false
 SKIP_PLATFORM_CHECK=false
 SKIP_DEVICE_SETUP=false
 SKIP_USER_SETUP=false
+SKIP_OSQUERY=false
 NON_INTERACTIVE=false
 DEVICE_SETUP_COMPLETED=false
 FIRMWARE_CHANGED=true
@@ -63,6 +65,7 @@ STATUS_DEVICE_SETUP=""
 STATUS_NETBIRD_CONNECT=""
 STATUS_SERVICES=""
 STATUS_USER_SETUP=""
+STATUS_OSQUERY=""
 STATUS_PERMISSIONS=""
 
 # Determine the real (non-root) user who invoked this script.
@@ -96,6 +99,10 @@ while [[ $# -gt 0 ]]; do
             SKIP_USER_SETUP=true
             shift
             ;;
+        --skip-osquery)
+            SKIP_OSQUERY=true
+            shift
+            ;;
         --ctrs-url)
             CTRS_URL="$2"
             shift 2
@@ -116,6 +123,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --skip-platform-check  Skip platform verification (for testing)"
             echo "  --skip-device-setup    Skip device authorization config provisioning"
             echo "  --skip-user-setup      Skip ctrs service account creation"
+            echo "  --skip-osquery         Skip osquery endpoint monitoring installation"
             echo "  --ctrs-url <url>       CTRS server URL (default: https://my.centrunk.net)"
             echo "  -y, --yes              Non-interactive mode (assume yes to prompts)"
             echo "  --help                 Show this help message"
@@ -325,6 +333,76 @@ install_prerequisites() {
 
     print_status "Prerequisites installed successfully"
     STATUS_PREREQUISITES="done"
+}
+
+# Install osquery endpoint monitoring
+install_osquery() {
+    if [[ "$SKIP_OSQUERY" == "true" ]]; then
+        print_warning "Skipping osquery installation (--skip-osquery flag)"
+        STATUS_OSQUERY="skipped"
+        return
+    fi
+
+    # Deploy configuration (even if already installed, keep config current)
+    deploy_osquery_config() {
+        local conf_url="${INSTALLER_REPO_RAW}/osquery/osquery.conf"
+        local dest="/etc/osquery/osquery.conf"
+
+        print_status "Deploying osquery configuration..."
+        mkdir -p /etc/osquery
+        if ! curl -fsSL -o "$dest" "$conf_url"; then
+            print_warning "Failed to download osquery.conf, using minimal default"
+            cat > "$dest" << 'OSQEOF'
+{
+  "options": {
+    "config_plugin": "filesystem",
+    "logger_plugin": "filesystem",
+    "logger_path": "/var/log/osquery",
+    "disable_logging": "false",
+    "schedule_splay_percent": "10",
+    "utc": "true"
+  },
+  "schedule": {
+    "system_info": {
+      "query": "SELECT hostname, cpu_brand, physical_memory, hardware_vendor, hardware_model FROM system_info;",
+      "interval": 3600
+    }
+  }
+}
+OSQEOF
+        fi
+    }
+
+    # Idempotent: skip install if already present
+    if command -v osqueryd &>/dev/null; then
+        print_status "osquery already installed"
+        deploy_osquery_config
+        STATUS_OSQUERY="already installed"
+        return
+    fi
+
+    print_status "Installing osquery..."
+
+    # Import the osquery GPG signing key (modern signed-by approach)
+    curl -fsSL https://pkg.osquery.io/deb/pubkey.gpg \
+        | gpg --dearmor -o /usr/share/keyrings/osquery-archive-keyring.gpg
+
+    # Add the official osquery apt repository
+    local arch
+    arch="$(dpkg --print-architecture)"
+    echo "deb [arch=${arch} signed-by=/usr/share/keyrings/osquery-archive-keyring.gpg] https://pkg.osquery.io/deb deb main" \
+        > /etc/apt/sources.list.d/osquery.list
+
+    apt-get update -qq
+    apt-get install -y osquery
+
+    deploy_osquery_config
+
+    # Enable and start the daemon immediately
+    systemctl enable --now osqueryd
+
+    print_status "osquery installed and running"
+    STATUS_OSQUERY="installed"
 }
 
 # Install Netbird
@@ -1008,6 +1086,7 @@ print_summary() {
     echo "Actions Performed:"
     print_step "Platform check"       "$STATUS_PLATFORM"
     print_step "Prerequisites"        "$STATUS_PREREQUISITES"
+    print_step "Osquery monitoring"   "$STATUS_OSQUERY"
     print_step "Netbird install"      "$STATUS_NETBIRD_INSTALL"
     print_step "Directory structure"  "$STATUS_DIRECTORIES"
     print_step "Firmware source"      "$STATUS_FIRMWARE_CLONE"
@@ -1080,6 +1159,7 @@ main() {
     setup_ctrs_user
     stop_running_services
     install_prerequisites
+    install_osquery
     install_netbird
     create_directories
     clone_firmware

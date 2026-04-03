@@ -53,7 +53,7 @@ jobs:
 
             # Run installation (skip netbird and services for CI testing)
             # Platform check should PASS since we're on real Raspberry Pi OS
-            /hotspot-installer/install.sh --skip-netbird --skip-services
+            /hotspot-installer/install.sh --skip-netbird --skip-services --skip-osquery
 
             # Verify the build was successful
             echo "Verifying installation..."
@@ -128,6 +128,12 @@ jobs:
             fi
           done
           echo "All service files validated!"
+
+      - name: Validate osquery configuration
+        run: |
+          echo "Checking osquery/osquery.conf..."
+          python3 -m json.tool osquery/osquery.conf > /dev/null
+          echo "✓ osquery.conf is valid JSON"
 
   test-install-x86:
     name: Test Script Logic (x86_64)

@@ -74,12 +74,12 @@ $CONTAINER_CMD run --rm --platform linux/arm64 \
         
         echo ""
         echo "========================================"
-        echo "Running install.sh -y --skip-netbird --skip-services --skip-platform-check"
+        echo "Running install.sh -y --skip-netbird --skip-services --skip-platform-check --skip-osquery"
         echo "========================================"
         echo ""
 
         # Run the installer (skip platform check since this is Debian, not Pi OS)
-        /tmp/installer/install.sh -y --skip-netbird --skip-services --skip-platform-check
+        /tmp/installer/install.sh -y --skip-netbird --skip-services --skip-platform-check --skip-osquery
         
         echo ""
         echo "========================================"
