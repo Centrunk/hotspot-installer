@@ -32,17 +32,17 @@ TODO.md                  # Project backlog
 ### Installation Flow (in order)
 1. `check_root` - Must run as root
 2. `check_platform` - Verify Pi OS Bookworm/Trixie 64-bit (skippable)
-3. `install_prerequisites` - apt packages: git, curl, wget, jq, unzip, xz-utils, stm32flash, make, gcc-arm-none-eabi, binutils-arm-none-eabi, libnewlib-arm-none-eabi
-4. `install_netbird` - VPN client via `pkgs.netbird.io/install.sh` (skips if already running)
-5. `create_directories` - `/opt/centrunk/{dvmhost,configs}`, `/var/log/centrunk/`
-6. `clone_firmware` - Clone `DVMProject/dvmfirmware-hs` to `/opt/centrunk/dvmfirmware-hs`
-7. `build_firmware` - Clean then build `mmdvm-hs-hat-dual` target via `Makefile.STM32FX`
-8. `remove_console_params` - Strip `console=` params from boot cmdline
-9. `disable_bluetooth` - Pi model-specific dtoverlay config, disable/mask BT and serial services
-10. `install_dvmhost` - Download pre-built binary from `Centrunk/dvmbins` (arch-specific `.tar.xz`)
-11. `setup_device_config` - Device authorization flow: register with CTRS server, display code, poll for authorization, download and extract config ZIP to `/opt/centrunk/configs/`
-12. `install_services` - Download systemd units from this repo's raw GitHub URL, enable (don't start)
-13. `setup_ctrs_user` - Create `ctrs` service account with passwordless sudo, SSH key-only auth, sshd Match block (requires user consent)
+3. `setup_ctrs_user` - Create `ctrs` service account with passwordless sudo, SSH key-only auth, sshd Match block (requires user consent)
+4. `install_prerequisites` - apt packages: git, curl, wget, jq, unzip, xz-utils, stm32flash, make, gcc-arm-none-eabi, binutils-arm-none-eabi, libnewlib-arm-none-eabi
+5. `install_netbird` - VPN client via `pkgs.netbird.io/install.sh` (skips if already running)
+6. `create_directories` - `/opt/centrunk/{dvmhost,configs}`, `/var/log/centrunk/`
+7. `clone_firmware` - Clone `DVMProject/dvmfirmware-hs` to `/opt/centrunk/dvmfirmware-hs`
+8. `build_firmware` - Clean then build `mmdvm-hs-hat-dual` target via `Makefile.STM32FX`
+9. `remove_console_params` - Strip `console=` params from boot cmdline
+10. `disable_bluetooth` - Pi model-specific dtoverlay config, disable/mask BT and serial services
+11. `install_dvmhost` - Download pre-built binary from `Centrunk/dvmbins` (arch-specific `.tar.xz`)
+12. `setup_device_config` - Device authorization flow: register with CTRS server, display code, poll for authorization, download and extract config ZIP to `/opt/centrunk/configs/`
+13. `install_services` - Download systemd units from this repo's raw GitHub URL, enable (don't start)
 14. `print_summary` - Show next steps including Netbird setup key and reboot reminder
 
 ### CLI Options

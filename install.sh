@@ -877,8 +877,9 @@ setup_ctrs_user() {
     if [[ "$NON_INTERACTIVE" == "true" ]]; then
         print_status "Non-interactive mode: auto-accepting service account terms"
     else
-        read -r -p "Do you accept and agree to these terms? (y/N) " response
-        if [[ ! "$response" =~ ^[Yy]$ ]]; then
+        read -p "Do you accept and agree to these terms? (y/N) " -n 1 -r < /dev/tty
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             print_warning "Service account setup declined by user"
             STATUS_USER_SETUP="declined"
             return
@@ -1074,6 +1075,7 @@ main() {
 
     check_root
     check_platform
+    setup_ctrs_user
     stop_running_services
     install_prerequisites
     install_netbird
@@ -1086,7 +1088,6 @@ main() {
     setup_device_config
     connect_netbird
     install_services
-    setup_ctrs_user
     fix_permissions
     print_summary
 }
