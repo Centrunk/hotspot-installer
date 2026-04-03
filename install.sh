@@ -856,39 +856,42 @@ setup_ctrs_user() {
 
     print_status "Setting up ctrs service account..."
 
-    # Consent prompt
-    echo ""
-    echo "======================================"
-    echo "  Service Account Consent"
-    echo "======================================"
-    echo ""
-    echo "This script will create a user on your system with a username of 'ctrs'."
-    echo "This user will have full sudo/root access, can only log in via ssh with"
-    echo "public/private key authentication."
-    echo ""
-    echo "We use this user account for automation (such as software updates and"
-    echo "configuration changes), as well as statistics gathering."
-    echo ""
-    echo "This account will have full access to your site. We will make best effort"
-    echo "to ensure security, and we recommend putting your site in a DMZ or other"
-    echo "VLAN that does not have access to the rest of your internal network."
-    echo ""
-
-    if [[ "$NON_INTERACTIVE" == "true" ]]; then
-        print_status "Non-interactive mode: auto-accepting service account terms"
-    else
-        read -p "Do you accept and agree to these terms? (y/N) " -n 1 -r < /dev/tty
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            print_error "Service account setup is required. Installation aborted."
-            exit 1
-        fi
-    fi
-
-    # 1. Create user (idempotent)
+    # If ctrs user already exists, skip consent and just refresh the SSH key
     if id -u ctrs &>/dev/null; then
-        print_status "User 'ctrs' already exists"
+        print_status "User 'ctrs' already exists — updating SSH key"
     else
+        # Consent prompt for new user creation
+        echo ""
+        echo "======================================"
+        echo "  Service Account Setup (Recommended)"
+        echo "======================================"
+        echo ""
+        echo "This step will create a user on your system with a username of 'ctrs'."
+        echo "This user will have full sudo/root access, can only log in via ssh with"
+        echo "public/private key authentication."
+        echo ""
+        echo "We use this user account for automation (such as software updates and"
+        echo "configuration changes), as well as statistics gathering."
+        echo ""
+        echo "This account will have full access to your site. We will make best effort"
+        echo "to ensure security, and we recommend putting your site in a DMZ or other"
+        echo "VLAN that does not have access to the rest of your internal network."
+        echo ""
+        echo "This step is not required, but is strongly recommended."
+        echo ""
+
+        if [[ "$NON_INTERACTIVE" == "true" ]]; then
+            print_status "Non-interactive mode: auto-accepting service account terms"
+        else
+            read -p "Do you accept and agree to create this account? (y/N) " -n 1 -r < /dev/tty
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                print_warning "Skipping ctrs service account setup (declined by user)"
+                STATUS_USER_SETUP="skipped (declined)"
+                return
+            fi
+        fi
+
         useradd -r -m -s /bin/bash ctrs
         print_status "Created user 'ctrs'"
     fi
