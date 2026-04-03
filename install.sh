@@ -880,9 +880,8 @@ setup_ctrs_user() {
         read -p "Do you accept and agree to these terms? (y/N) " -n 1 -r < /dev/tty
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            print_warning "Service account setup declined by user"
-            STATUS_USER_SETUP="declined"
-            return
+            print_error "Service account setup is required. Installation aborted."
+            exit 1
         fi
     fi
 
