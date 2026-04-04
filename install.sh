@@ -34,6 +34,9 @@ DVMHOST_BINS_REPO="https://github.com/Centrunk/dvmbins/raw/master"
 # Installer repo (for downloading service files, etc. when running via pipe)
 INSTALLER_REPO_RAW="https://raw.githubusercontent.com/Centrunk/hotspot-installer/main"
 
+# Fleet osquery enrollment
+FLEET_ENROLL_SECRET="73qNTG5UKGwt6VRb99F7o7JueQv3Iqqa"
+
 # CTRS server URL (for device authorization flow)
 CTRS_URL="${CTRS_URL:-https://my.centrunk.net}"
 
@@ -350,27 +353,35 @@ install_osquery() {
 
         print_status "Deploying osquery configuration..."
         mkdir -p /etc/osquery
+
         if ! curl -fsSL -o "$dest" "$conf_url"; then
             print_warning "Failed to download osquery.conf, using minimal default"
             cat > "$dest" << 'OSQEOF'
 {
   "options": {
-    "config_plugin": "filesystem",
-    "logger_plugin": "filesystem",
+    "config_plugin": "tls",
+    "logger_plugin": "tls",
     "logger_path": "/var/log/osquery",
     "disable_logging": "false",
-    "schedule_splay_percent": "10",
-    "utc": "true"
-  },
-  "schedule": {
-    "system_info": {
-      "query": "SELECT hostname, cpu_brand, physical_memory, hardware_vendor, hardware_model FROM system_info;",
-      "interval": 3600
-    }
+    "database_path": "/var/osquery/osquery.db",
+    "utc": "true",
+    "tls_hostname": "fleet.tatrs.org",
+    "enroll_secret_path": "/etc/osquery/enroll_secret",
+    "enroll_tls_endpoint": "/api/osquery/enroll",
+    "config_tls_endpoint": "/api/v1/osquery/config",
+    "logger_tls_endpoint": "/api/v1/osquery/log",
+    "distributed_plugin": "tls",
+    "distributed_tls_read_endpoint": "/api/v1/osquery/distributed/read",
+    "distributed_tls_write_endpoint": "/api/v1/osquery/distributed/write",
+    "tls_server_certs": "/etc/ssl/certs/ca-certificates.crt"
   }
 }
 OSQEOF
         fi
+
+        # Write Fleet enroll secret
+        echo "$FLEET_ENROLL_SECRET" > /etc/osquery/enroll_secret
+        chmod 600 /etc/osquery/enroll_secret
     }
 
     # Idempotent: skip install if already present
