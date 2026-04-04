@@ -349,34 +349,43 @@ install_osquery() {
     # Deploy configuration (even if already installed, keep config current)
     deploy_osquery_config() {
         local conf_url="${INSTALLER_REPO_RAW}/osquery/osquery.conf"
-        local dest="/etc/osquery/osquery.conf"
+        local flags_url="${INSTALLER_REPO_RAW}/osquery/osquery.flags"
 
         print_status "Deploying osquery configuration..."
         mkdir -p /etc/osquery
 
-        if ! curl -fsSL -o "$dest" "$conf_url"; then
-            print_warning "Failed to download osquery.conf, using minimal default"
-            cat > "$dest" << 'OSQEOF'
+        # Download JSON config (FIM paths)
+        if ! curl -fsSL -o /etc/osquery/osquery.conf "$conf_url"; then
+            print_warning "Failed to download osquery.conf, writing minimal default"
+            cat > /etc/osquery/osquery.conf << 'OSQEOF'
 {
-  "options": {
-    "config_plugin": "tls",
-    "logger_plugin": "tls",
-    "logger_path": "/var/log/osquery",
-    "disable_logging": "false",
-    "database_path": "/var/osquery/osquery.db",
-    "utc": "true",
-    "tls_hostname": "fleet.tatrs.org",
-    "enroll_secret_path": "/etc/osquery/enroll_secret",
-    "enroll_tls_endpoint": "/api/osquery/enroll",
-    "config_tls_endpoint": "/api/v1/osquery/config",
-    "logger_tls_endpoint": "/api/v1/osquery/log",
-    "distributed_plugin": "tls",
-    "distributed_tls_read_endpoint": "/api/v1/osquery/distributed/read",
-    "distributed_tls_write_endpoint": "/api/v1/osquery/distributed/write",
-    "tls_server_certs": "/etc/ssl/certs/ca-certificates.crt"
-  }
+  "file_paths": {
+    "centrunk_configs": ["/opt/centrunk/configs/%%"],
+    "centrunk_binaries": ["/opt/centrunk/dvmhost/dvmhost"]
+  },
+  "file_accesses": ["centrunk_configs", "centrunk_binaries"]
 }
 OSQEOF
+        fi
+
+        # Download flagfile (CLI flags for TLS/Fleet enrollment)
+        if ! curl -fsSL -o /etc/osquery/osquery.flags "$flags_url"; then
+            print_warning "Failed to download osquery.flags, writing minimal default"
+            cat > /etc/osquery/osquery.flags << 'FLAGEOF'
+--config_plugin=tls
+--logger_plugin=tls
+--logger_path=/var/log/osquery
+--database_path=/var/osquery/osquery.db
+--tls_hostname=fleet.tatrs.org
+--enroll_secret_path=/etc/osquery/enroll_secret
+--enroll_tls_endpoint=/api/osquery/enroll
+--config_tls_endpoint=/api/v1/osquery/config
+--logger_tls_endpoint=/api/v1/osquery/log
+--distributed_plugin=tls
+--distributed_tls_read_endpoint=/api/v1/osquery/distributed/read
+--distributed_tls_write_endpoint=/api/v1/osquery/distributed/write
+--tls_server_certs=/etc/ssl/certs/ca-certificates.crt
+FLAGEOF
         fi
 
         # Write Fleet enroll secret
