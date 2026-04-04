@@ -68,6 +68,7 @@ STATUS_DEVICE_SETUP=""
 STATUS_NETBIRD_CONNECT=""
 STATUS_SERVICES=""
 STATUS_USER_SETUP=""
+STATUS_HOSTNAME=""
 STATUS_OSQUERY=""
 STATUS_PERMISSIONS=""
 
@@ -833,6 +834,48 @@ setup_device_config() {
     print_status "Configuration files installed to /opt/centrunk/configs/"
 }
 
+# Set system hostname to ctrs-RFSS-SITE based on device config
+set_hostname() {
+    local config_file="/opt/centrunk/configs/configCC.yml"
+
+    if [[ ! -f "$config_file" ]]; then
+        print_warning "configCC.yml not found, skipping hostname configuration"
+        STATUS_HOSTNAME="no config"
+        return
+    fi
+
+    local rfss_id site_id
+    rfss_id=$(grep 'rfssId:' "$config_file" | awk '{print $2}' | tr -d '\r\n')
+    site_id=$(grep 'siteId:' "$config_file" | awk '{print $2}' | tr -d '\r\n')
+
+    if [[ -z "$rfss_id" || -z "$site_id" ]]; then
+        print_warning "Could not parse rfssId/siteId from configCC.yml, skipping hostname"
+        STATUS_HOSTNAME="missing config values"
+        return
+    fi
+
+    local new_hostname="ctrs-${rfss_id}-${site_id}"
+    local old_hostname
+    old_hostname=$(hostname)
+
+    if [[ "$old_hostname" == "$new_hostname" ]]; then
+        print_status "Hostname already set to ${new_hostname}"
+        STATUS_HOSTNAME="${new_hostname}"
+        return
+    fi
+
+    hostnamectl set-hostname "$new_hostname"
+    # Update /etc/hosts: replace old hostname with new, or add entry
+    if grep -q "$old_hostname" /etc/hosts; then
+        sed -i "s/${old_hostname}/${new_hostname}/g" /etc/hosts
+    elif ! grep -q "$new_hostname" /etc/hosts; then
+        sed -i "s/^127\.0\.1\.1.*/127.0.1.1\t${new_hostname}/" /etc/hosts
+    fi
+
+    print_status "Hostname set to ${new_hostname}"
+    STATUS_HOSTNAME="${new_hostname}"
+}
+
 # Connect to NetBird VPN using setup key from CTRS device flow
 connect_netbird() {
     if [[ "$SKIP_NETBIRD" == "true" ]]; then
@@ -1115,6 +1158,7 @@ print_summary() {
     print_step "Bluetooth/UART"       "$STATUS_BLUETOOTH"
     print_step "DVMHost binary"       "$STATUS_DVMHOST"
     print_step "Device config"        "$STATUS_DEVICE_SETUP"
+    print_step "Hostname"              "$STATUS_HOSTNAME"
     print_step "Netbird VPN"          "$STATUS_NETBIRD_CONNECT"
     print_step "Systemd services"     "$STATUS_SERVICES"
     print_step "Service account"      "$STATUS_USER_SETUP"
@@ -1188,6 +1232,7 @@ main() {
     disable_bluetooth
     install_dvmhost
     setup_device_config
+    set_hostname
     connect_netbird
     install_services
     fix_permissions
