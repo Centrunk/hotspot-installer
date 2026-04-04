@@ -900,11 +900,18 @@ connect_netbird() {
         rm -f /etc/netbird/config.json
     fi
 
+    if [[ ! "$STATUS_HOSTNAME" =~ ^ctrs- ]]; then
+        print_error "Cannot connect to NetBird without a valid hostname (ctrs-RFSS-SITE)"
+        STATUS_NETBIRD_CONNECT="no hostname"
+        return 1
+    fi
+
     print_status "NetBird setup key received from CTRS, joining VPN..."
     if netbird up \
         --management-url https://netbird.centrunk.net \
         --allow-server-ssh \
-        --setup-key "$NETBIRD_SETUP_KEY"; then
+        --setup-key "$NETBIRD_SETUP_KEY" \
+        --hostname "$STATUS_HOSTNAME"; then
         print_status "NetBird connected successfully"
         NETBIRD_AUTO_CONNECTED=true
         STATUS_NETBIRD_CONNECT="connected"
