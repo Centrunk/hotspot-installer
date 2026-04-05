@@ -720,8 +720,24 @@ setup_device_config() {
         return
     fi
 
+    # All possible config files that any site type might have
+    local all_configs=(
+        "configCC.yml"
+        "configVC.yml"
+        "configDVRS.yml"
+        "configCONVENTIONAL.yml"
+    )
+
     # Always confirm before overwriting existing configs
-    if [[ -f /opt/centrunk/configs/configCC.yml || -f /opt/centrunk/configs/configVC.yml ]]; then
+    local has_existing=false
+    for cfg in "${all_configs[@]}"; do
+        if [[ -f "/opt/centrunk/configs/${cfg}" ]]; then
+            has_existing=true
+            break
+        fi
+    done
+
+    if [[ "$has_existing" == "true" ]]; then
         print_warning "Config files already exist in /opt/centrunk/configs/"
         read -p "Overwrite existing configuration with new download from myCTRS? (y/N) " -n 1 -r < /dev/tty
         echo
@@ -931,12 +947,30 @@ install_services() {
 
     print_status "Installing systemd services..."
 
-    # Stop, disable, and remove all existing centrunk services
+    # All possible service units for any site type
+    local all_services=(
+        "centrunk.cc.service"
+        "centrunk.vc.service"
+        "centrunk.dvrs.service"
+        "centrunk.conv.service"
+    )
+
+    # Stop, disable, and remove all known services regardless of site type
+    for svc_name in "${all_services[@]}"; do
+        if [[ -f "/etc/systemd/system/${svc_name}" ]]; then
+            print_status "Removing existing ${svc_name}..."
+            systemctl stop "$svc_name" 2>/dev/null || true
+            systemctl disable "$svc_name" 2>/dev/null || true
+            rm -f "/etc/systemd/system/${svc_name}"
+        fi
+    done
+
+    # Also catch any unexpected centrunk services not in the known list
     for svc_file in /etc/systemd/system/centrunk.*.service; do
         [[ -e "$svc_file" ]] || continue
         local svc_name
         svc_name=$(basename "$svc_file")
-        print_status "Removing existing ${svc_name}..."
+        print_status "Removing unexpected ${svc_name}..."
         systemctl stop "$svc_name" 2>/dev/null || true
         systemctl disable "$svc_name" 2>/dev/null || true
         rm -f "$svc_file"
