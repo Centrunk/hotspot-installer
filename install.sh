@@ -970,13 +970,32 @@ install_services() {
     done
     systemctl daemon-reload
 
-    # Map config files to their corresponding service units
+    # Map static config files to their corresponding service units.
+    # VC units are handled separately because a trunked site may ship multiple
+    # voice channels (configVC.yml, configVC2.yml, configVC3.yml, ...) and each
+    # one needs its own centrunk.vc[N].service generated from the VC template.
     local -A config_to_service=(
         ["configCC.yml"]="centrunk.cc.service"
-        ["configVC.yml"]="centrunk.vc.service"
         ["configDVRS.yml"]="centrunk.dvrs.service"
         ["configCONVENTIONAL.yml"]="centrunk.conv.service"
     )
+
+    # Discover VC instances: map generated service name -> source config filename.
+    local -A vc_service_to_config=()
+    shopt -s nullglob
+    for cfg_path in /opt/centrunk/configs/configVC*.yml; do
+        local cfg_name suffix
+        cfg_name=$(basename "$cfg_path")          # configVC.yml, configVC2.yml, ...
+        suffix="${cfg_name#configVC}"             # ".yml", "2.yml", ...
+        suffix="${suffix%.yml}"                   # "", "2", "3", ...
+        # Reject anything that isn't empty or all digits (e.g. configVCfoo.yml)
+        if [[ -n "$suffix" && ! "$suffix" =~ ^[0-9]+$ ]]; then
+            print_warning "Ignoring unexpected config: ${cfg_name}"
+            continue
+        fi
+        vc_service_to_config["centrunk.vc${suffix}.service"]="$cfg_name"
+    done
+    shopt -u nullglob
 
     # Determine which services to install based on configs present
     local services=()
@@ -984,6 +1003,9 @@ install_services() {
         if [[ -f "/opt/centrunk/configs/${config}" ]]; then
             services+=("${config_to_service[$config]}")
         fi
+    done
+    for svc in "${!vc_service_to_config[@]}"; do
+        services+=("$svc")
     done
 
     if [[ ${#services[@]} -eq 0 ]]; then
@@ -995,15 +1017,37 @@ install_services() {
     local tmp_dir
     tmp_dir=$(mktemp -d)
 
-    for svc in "${services[@]}"; do
-        local url="${INSTALLER_REPO_RAW}/systemd/${svc}"
-        print_status "Downloading ${svc}..."
-        if ! curl -fsSL -o "${tmp_dir}/${svc}" "$url"; then
-            print_error "Failed to download ${svc} from ${url}"
+    # Download the VC template once if any VC instances need to be installed.
+    local vc_template=""
+    if [[ ${#vc_service_to_config[@]} -gt 0 ]]; then
+        vc_template="${tmp_dir}/centrunk.vc.service"
+        local vc_url="${INSTALLER_REPO_RAW}/systemd/centrunk.vc.service"
+        print_status "Downloading centrunk.vc.service template..."
+        if ! curl -fsSL -o "$vc_template" "$vc_url"; then
+            print_error "Failed to download centrunk.vc.service template from ${vc_url}"
             rm -rf "$tmp_dir"
             exit 1
         fi
-        cp "${tmp_dir}/${svc}" /etc/systemd/system/
+    fi
+
+    for svc in "${services[@]}"; do
+        if [[ -n "${vc_service_to_config[$svc]:-}" ]]; then
+            # VC instance — generate from template by patching ExecStart's config path
+            local cfg="${vc_service_to_config[$svc]}"
+            print_status "Generating ${svc} for ${cfg}..."
+            sed -E "s|(-c[[:space:]]+/opt/centrunk/configs/)configVC\.yml|\1${cfg}|" \
+                "$vc_template" > "/etc/systemd/system/${svc}"
+        else
+            # Static unit — download from repo as before
+            local url="${INSTALLER_REPO_RAW}/systemd/${svc}"
+            print_status "Downloading ${svc}..."
+            if ! curl -fsSL -o "${tmp_dir}/${svc}" "$url"; then
+                print_error "Failed to download ${svc} from ${url}"
+                rm -rf "$tmp_dir"
+                exit 1
+            fi
+            cp "${tmp_dir}/${svc}" /etc/systemd/system/
+        fi
         print_status "Installed ${svc}"
     done
 
