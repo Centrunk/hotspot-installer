@@ -1,0 +1,25 @@
+#!/bin/bash
+#
+# Stamp install.sh with build timestamp before every commit.
+#
+# Activate this hook per-clone with:
+#   git config core.hooksPath .githooks
+#
+# Without that one-time setup, the hook is inert and install.sh ships
+# with INSTALLER_VERSION="dev" — a deliberate graceful-degradation path.
+#
+set -e
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+TARGET="$REPO_ROOT/install.sh"
+
+# If install.sh is missing for any reason, do not block the commit.
+[[ -f "$TARGET" ]] || exit 0
+
+TIMESTAMP="$(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+
+# Anchored replacement so the pattern cannot drift onto an unrelated line.
+sed -i -E "s|^INSTALLER_VERSION=\".*\"\$|INSTALLER_VERSION=\"$TIMESTAMP\"|" "$TARGET"
+
+# Re-stage so the freshly stamped file lands in this commit.
+git add "$TARGET"

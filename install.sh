@@ -28,6 +28,10 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# Installer build timestamp. Auto-updated by .githooks/pre-commit on every commit.
+# Do not edit this line by hand — see .githooks/pre-commit and README.md.
+INSTALLER_VERSION="2026-05-18 01:21:59 UTC"
+
 # Binary download URL
 DVMHOST_BINS_REPO="https://github.com/Centrunk/dvmbins/raw/master"
 
@@ -1315,6 +1319,7 @@ print_summary() {
 main() {
     echo "======================================"
     echo "Centrunk DVMHost Installation Script"
+    echo "Version: $INSTALLER_VERSION"
     echo "======================================"
     echo ""
 

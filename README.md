@@ -147,6 +147,19 @@ sudo systemctl disable centrunk.cc.service
 sudo systemctl disable centrunk.vc.service
 ```
 
+## Development Setup
+
+After cloning, enable the version-stamp hook so each commit auto-updates the
+`INSTALLER_VERSION` line printed at the top of every install run:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The hook lives at `.githooks/pre-commit`. It is inert until activated per-clone
+with the command above. Without it, commits land with `INSTALLER_VERSION="dev"`
+unchanged — a deliberate graceful-degradation path, not a failure.
+
 ## Automated Testing
 
 This repository includes GitHub Actions workflows that automatically test the installation script on:
