@@ -712,6 +712,27 @@ install_dvmhost() {
     # fi
 }
 
+# Remove all existing centrunk configs and systemd service units.
+# Called only after a new config ZIP has been successfully downloaded from CTRS,
+# so we never wipe a working install without a replacement in hand.
+remove_existing_install() {
+    print_status "Removing existing centrunk.*.service units..."
+    shopt -s nullglob
+    for svc_file in /etc/systemd/system/centrunk.*.service; do
+        local svc_name
+        svc_name=$(basename "$svc_file")
+        systemctl stop "$svc_name" 2>/dev/null || true
+        systemctl disable "$svc_name" 2>/dev/null || true
+        rm -f "$svc_file"
+        print_status "  Removed ${svc_name}"
+    done
+    shopt -u nullglob
+    systemctl daemon-reload
+
+    print_status "Clearing /opt/centrunk/configs/..."
+    rm -rf /opt/centrunk/configs/*
+}
+
 # Device authorization flow — register, display code, poll, download config
 setup_device_config() {
     if [[ "$SKIP_DEVICE_SETUP" == "true" ]]; then
@@ -739,14 +760,15 @@ setup_device_config() {
 
     if [[ "$has_existing" == "true" ]]; then
         print_warning "Config files already exist in /opt/centrunk/configs/"
-        read -p "Overwrite existing configuration with new download from myCTRS? (y/N) " -n 1 -r < /dev/tty
+        print_warning "Existing centrunk.*.service units will also be removed."
+        read -p "Overwrite existing configuration and services with a fresh download from myCTRS? (y/N) " -n 1 -r < /dev/tty
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            print_status "Keeping existing configuration"
+            print_status "Keeping existing configuration and services"
             STATUS_DEVICE_SETUP="kept existing"
             return
         fi
-        print_warning "Existing configs will be overwritten"
+        print_warning "Existing configs and services will be removed once new configs are downloaded"
     fi
 
     print_status "Starting device authorization flow..."
@@ -834,8 +856,8 @@ setup_device_config() {
     NETBIRD_SETUP_KEY=$(grep -i 'X-Netbird-Setup-Key' "$tmp_headers" 2>/dev/null | cut -d' ' -f2 | tr -d '\r\n' || true)
     rm -f "$tmp_headers"
 
-    # 5. Clear existing configs and extract new ones
-    rm -rf /opt/centrunk/configs/*
+    # 5. Clear existing configs and services, then extract new configs
+    remove_existing_install
     if ! unzip -o "$tmp_zip" -d /opt/centrunk/configs/; then
         print_error "Failed to extract configuration files"
         rm -f "$tmp_zip"
