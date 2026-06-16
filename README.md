@@ -1,6 +1,6 @@
 # Centrunk DVMHost Installation Script
 
-Automated installation script for installing [DVMHost](https://github.com/DVMProject/dvmhost) on Raspberry Pi OS (64-bit).
+Automated installation script for installing [DVMHost](https://github.com/DVMProject/dvmhost) on Raspberry Pi OS or Debian Trixie (64-bit).
 
 [![Test Installation on Raspberry Pi OS](https://github.com/Centrunk/hotspot-installer/actions/workflows/test-install.yml/badge.svg)](https://github.com/Centrunk/hotspot-installer/actions/workflows/test-install.yml)
 
@@ -10,7 +10,7 @@ Automated installation script for installing [DVMHost](https://github.com/DVMPro
 - Netbird VPN installation
 - Pre-built DVMHost binary download from [Centrunk/dvmbins](https://github.com/Centrunk/dvmbins)
 - Automatic architecture detection (arm64, armhf, amd64)
-- Platform verification (Raspberry Pi OS Bookworm/Trixie 64-bit)
+- Platform verification (Raspberry Pi OS Bookworm/Trixie or Debian Trixie, 64-bit aarch64/x86_64; minimum 2GB RAM)
 - Systemd service installation for Control Channel (CC) and Voice Channel (VC)
 - One-liner installation support
 
@@ -172,8 +172,10 @@ Tests run on every push and pull request.
 
 ## Requirements
 
-- Raspberry Pi OS 64-bit (Bookworm or newer recommended)
-- Raspberry Pi 3, 4, or 5 (64-bit capable)
+- One of:
+  - Raspberry Pi OS 64-bit (Bookworm or Trixie) on a Raspberry Pi 3, 4, or 5
+  - Debian Trixie 64-bit (aarch64 or x86_64)
+- Minimum 2GB RAM
 - Internet connection
 - Root/sudo access
 

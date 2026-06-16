@@ -25,13 +25,16 @@ TODO.md                  # Project backlog
 ## Installation Script Requirements
 
 ### Target Platform
-- Raspberry Pi OS 64-bit (Bookworm or Trixie) on Raspberry Pi 3/4/5
-- Architecture: `aarch64` required; script also maps `armhf` and `amd64` for binary downloads
-- Platform check validates: 64-bit ARM, Raspberry Pi OS (via `/etc/rpi-issue`, `PRETTY_NAME`, or `ID=raspbian`), Bookworm/Trixie codename, 64-bit OS
+- Raspberry Pi OS 64-bit (Bookworm or Trixie) on Raspberry Pi 3/4/5, **or** generic Debian Trixie 64-bit
+- Architecture: `aarch64` or `x86_64` accepted; script also maps `armhf` for binary downloads
+- Minimum 2GB RAM (`check_memory`, overridable warning; bypassed by `--skip-platform-check`)
+- Platform check validates: 64-bit arch (aarch64/x86_64), OS is Raspberry Pi OS (via `/etc/rpi-issue`, `PRETTY_NAME`, or `ID=raspbian`) or generic Debian (`ID=debian`), codename (Pi OS: Bookworm/Trixie; Debian: Trixie only), 64-bit OS
+- On non-Pi hardware the Pi-only steps (firmware build, console-param strip, bluetooth/UART disable) self-skip via their existing `/boot/firmware` and `/proc/device-tree/model` guards
 
 ### Installation Flow (in order)
 1. `check_root` - Must run as root
-2. `check_platform` - Verify Pi OS Bookworm/Trixie 64-bit (skippable)
+2. `check_platform` - Verify Pi OS Bookworm/Trixie or Debian Trixie, 64-bit aarch64/x86_64 (skippable)
+2a. `check_memory` - Verify minimum 2GB RAM (overridable warning; skipped by `--skip-platform-check`)
 3. `setup_ctrs_user` - Create `ctrs` service account with passwordless sudo, SSH key-only auth, sshd Match block (requires user consent)
 4. `install_prerequisites` - apt packages: git, curl, wget, jq, unzip, xz-utils, stm32flash, make, gcc-arm-none-eabi, binutils-arm-none-eabi, libnewlib-arm-none-eabi
 5. `install_netbird` - VPN client via `pkgs.netbird.io/install.sh` (skips if already running)

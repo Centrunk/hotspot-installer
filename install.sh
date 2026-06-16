@@ -1,7 +1,8 @@
 #!/bin/bash
 #
 # Centrunk DVMHost Installation Script
-# Automates installation on Raspberry Pi OS Bookworm/Trixie (64-bit)
+# Automates installation on Raspberry Pi OS Bookworm/Trixie or Debian Trixie
+# (64-bit aarch64/x86_64). Minimum 2GB RAM.
 #
 # Usage: sudo ./install.sh [options]
 #   Options:
@@ -30,7 +31,7 @@ NC='\033[0m' # No Color
 
 # Installer build timestamp. Auto-updated by .githooks/pre-commit on every commit.
 # Do not edit this line by hand — see .githooks/pre-commit and README.md.
-INSTALLER_VERSION="2026-05-18 01:21:59 UTC"
+INSTALLER_VERSION="2026-06-16 20:37:54 UTC"
 
 # Binary download URL
 DVMHOST_BINS_REPO="https://github.com/Centrunk/dvmbins/raw/master"
@@ -60,6 +61,7 @@ NETBIRD_AUTO_CONNECTED=false
 
 # Step result tracking (set by each function, read by print_summary)
 STATUS_PLATFORM=""
+STATUS_MEMORY=""
 STATUS_PREREQUISITES=""
 STATUS_NETBIRD_INSTALL=""
 STATUS_DIRECTORIES=""
@@ -236,16 +238,19 @@ check_platform() {
     
     local errors=0
     
-    # Check architecture - must be 64-bit ARM
+    # Check architecture - 64-bit ARM (aarch64) or 64-bit x86 (x86_64)
     local arch
     arch=$(uname -m)
-    if [[ "$arch" != "aarch64" ]]; then
-        print_error "This installer requires 64-bit ARM architecture (aarch64)"
-        print_error "Detected architecture: $arch"
-        errors=$((errors + 1))
-    else
-        print_status "Architecture: $arch ✓"
-    fi
+    case "$arch" in
+        aarch64|x86_64)
+            print_status "Architecture: $arch ✓"
+            ;;
+        *)
+            print_error "This installer requires 64-bit ARM (aarch64) or 64-bit x86 (x86_64)"
+            print_error "Detected architecture: $arch"
+            errors=$((errors + 1))
+            ;;
+    esac
     
     # Check OS release file exists
     if [[ ! -f /etc/os-release ]]; then
@@ -256,9 +261,10 @@ check_platform() {
     # shellcheck source=/dev/null
     . /etc/os-release
     
-    # Check for Raspberry Pi OS specifically
-    # Raspberry Pi OS sets ID=debian but has "Raspberry Pi" in PRETTY_NAME
-    # It also has /etc/rpi-issue file
+    # Detect the OS family. Two supported platforms:
+    #   - Raspberry Pi OS (sets ID=debian but has "Raspberry Pi" in PRETTY_NAME,
+    #     and ships /etc/rpi-issue; older releases use ID=raspbian)
+    #   - Generic Debian (ID=debian, no Raspberry Pi markers)
     local is_rpi_os=false
     if [[ -f /etc/rpi-issue ]]; then
         is_rpi_os=true
@@ -267,29 +273,47 @@ check_platform() {
     elif [[ "$ID" == "raspbian" ]]; then
         is_rpi_os=true
     fi
-    
-    if [[ "$is_rpi_os" != "true" ]]; then
-        print_error "This installer requires Raspberry Pi OS"
+
+    local is_debian=false
+    if [[ "$ID" == "debian" ]]; then
+        is_debian=true
+    fi
+
+    if [[ "$is_rpi_os" == "true" ]]; then
+        print_status "Operating System: Raspberry Pi OS ✓"
+    elif [[ "$is_debian" == "true" ]]; then
+        print_status "Operating System: Debian ✓"
+    else
+        print_error "This installer requires Raspberry Pi OS or Debian"
         print_error "Detected OS: $PRETTY_NAME"
         errors=$((errors + 1))
-    else
-        print_status "Operating System: Raspberry Pi OS ✓"
     fi
-    
-    # Check for Bookworm (Debian 12) or Trixie (Debian 13)
-    if [[ "$VERSION_CODENAME" != "bookworm" && "$VERSION_CODENAME" != "trixie" ]]; then
-        print_error "This installer requires Raspberry Pi OS Bookworm or Trixie"
-        print_error "Detected version: $VERSION_CODENAME"
-        errors=$((errors + 1))
-    else
-        print_status "Version: $VERSION_CODENAME ✓"
+
+    # Codename check. Raspberry Pi OS allows Bookworm or Trixie; generic Debian
+    # is supported on Trixie only. Anything else is rejected.
+    if [[ "$is_rpi_os" == "true" ]]; then
+        if [[ "$VERSION_CODENAME" != "bookworm" && "$VERSION_CODENAME" != "trixie" ]]; then
+            print_error "This installer requires Raspberry Pi OS Bookworm or Trixie"
+            print_error "Detected version: $VERSION_CODENAME"
+            errors=$((errors + 1))
+        else
+            print_status "Version: $VERSION_CODENAME ✓"
+        fi
+    elif [[ "$is_debian" == "true" ]]; then
+        if [[ "$VERSION_CODENAME" != "trixie" ]]; then
+            print_error "This installer requires Debian Trixie"
+            print_error "Detected version: $VERSION_CODENAME"
+            errors=$((errors + 1))
+        else
+            print_status "Version: $VERSION_CODENAME ✓"
+        fi
     fi
     
     # Check for 64-bit OS (not just 64-bit CPU)
     local os_arch
     os_arch=$(getconf LONG_BIT)
     if [[ "$os_arch" != "64" ]]; then
-        print_error "This installer requires 64-bit Raspberry Pi OS"
+        print_error "This installer requires a 64-bit OS"
         print_error "Detected: ${os_arch}-bit OS"
         errors=$((errors + 1))
     else
@@ -300,7 +324,7 @@ check_platform() {
     if [[ $errors -gt 0 ]]; then
         echo ""
         print_error "Platform verification failed with $errors error(s)"
-        print_error "This installer requires: Raspberry Pi OS Bookworm/Trixie 64-bit"
+        print_error "This installer requires: Raspberry Pi OS (Bookworm/Trixie) or Debian Trixie, 64-bit (aarch64/x86_64)"
         echo ""
         if [[ "$NON_INTERACTIVE" == "true" ]]; then
             print_error "Non-interactive mode: aborting due to platform mismatch"
@@ -318,6 +342,56 @@ check_platform() {
         print_status "Platform verification passed!"
         STATUS_PLATFORM="passed"
     fi
+}
+
+# Verify the system has enough RAM (minimum 2GB). Treated as part of platform
+# verification, so --skip-platform-check bypasses it too.
+check_memory() {
+    if [[ "$SKIP_PLATFORM_CHECK" == "true" ]]; then
+        print_warning "Skipping memory verification (--skip-platform-check flag)"
+        STATUS_MEMORY="skipped"
+        return
+    fi
+
+    # Minimum required RAM. We compare against MemTotal from /proc/meminfo, which
+    # is always somewhat less than installed RAM (kernel/GPU/CMA reservations).
+    # A literal 2,097,152 kB (2 GiB) would falsely reject genuine 2GB hardware,
+    # so the floor is set ~7% lower at 1,900,000 kB (~1.86 GiB).
+    local min_kb=1900000
+
+    local mem_kb
+    mem_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
+
+    if [[ -z "$mem_kb" ]]; then
+        print_warning "Could not determine system memory - skipping check"
+        STATUS_MEMORY="skipped (undetectable)"
+        return
+    fi
+
+    local mem_mb=$((mem_kb / 1024))
+
+    if [[ "$mem_kb" -ge "$min_kb" ]]; then
+        print_status "Memory: ${mem_mb} MB ✓"
+        STATUS_MEMORY="passed"
+        return
+    fi
+
+    echo ""
+    print_warning "This installer recommends a minimum of 2GB of RAM"
+    print_warning "Detected: ${mem_mb} MB"
+    echo ""
+    if [[ "$NON_INTERACTIVE" == "true" ]]; then
+        print_error "Non-interactive mode: aborting due to insufficient memory"
+        print_error "Use --skip-platform-check to bypass this check"
+        exit 1
+    fi
+    read -p "Continue anyway? (y/N) " -n 1 -r < /dev/tty
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        exit 1
+    fi
+    print_warning "Continuing despite low memory - this may cause issues!"
+    STATUS_MEMORY="low (overridden)"
 }
 
 # Install prerequisites
@@ -1252,6 +1326,7 @@ print_summary() {
 
     echo "Actions Performed:"
     print_step "Platform check"       "$STATUS_PLATFORM"
+    print_step "Memory check"         "$STATUS_MEMORY"
     print_step "Prerequisites"        "$STATUS_PREREQUISITES"
     print_step "Osquery monitoring"   "$STATUS_OSQUERY"
     print_step "Netbird install"      "$STATUS_NETBIRD_INSTALL"
@@ -1325,6 +1400,7 @@ main() {
 
     check_root
     check_platform
+    check_memory
     setup_ctrs_user
     stop_running_services
     install_prerequisites
