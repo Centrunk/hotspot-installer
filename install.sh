@@ -31,7 +31,7 @@ NC='\033[0m' # No Color
 
 # Installer build timestamp. Auto-updated by .githooks/pre-commit on every commit.
 # Do not edit this line by hand — see .githooks/pre-commit and README.md.
-INSTALLER_VERSION="2026-06-16 20:37:54 UTC"
+INSTALLER_VERSION="2026-06-16 20:46:50 UTC"
 
 # Binary download URL
 DVMHOST_BINS_REPO="https://github.com/Centrunk/dvmbins/raw/master"
@@ -411,7 +411,11 @@ install_prerequisites() {
         make \
         gcc-arm-none-eabi \
         binutils-arm-none-eabi \
-        libnewlib-arm-none-eabi
+        libnewlib-arm-none-eabi \
+        gpg \
+        sudo \
+        ca-certificates \
+        vim
 
     print_status "Prerequisites installed successfully"
     STATUS_PREREQUISITES="done"
