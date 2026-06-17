@@ -10,7 +10,7 @@ Automated installation script for installing [DVMHost](https://github.com/DVMPro
 - Netbird VPN installation
 - Pre-built DVMHost binary download from [Centrunk/dvmbins](https://github.com/Centrunk/dvmbins)
 - Automatic architecture detection (arm64, armhf, amd64)
-- Platform verification (Raspberry Pi OS Bookworm/Trixie or Debian Trixie, 64-bit aarch64/x86_64; minimum 2GB RAM)
+- Platform verification (Raspberry Pi OS Bookworm/Trixie or Debian Trixie, 64-bit aarch64/x86_64; minimum 4GB RAM)
 - Systemd service installation for Control Channel (CC) and Voice Channel (VC)
 - One-liner installation support
 
@@ -175,7 +175,7 @@ Tests run on every push and pull request.
 - One of:
   - Raspberry Pi OS 64-bit (Bookworm or Trixie) on a Raspberry Pi 3, 4, or 5
   - Debian Trixie 64-bit (aarch64 or x86_64)
-- Minimum 2GB RAM
+- Minimum 4GB RAM
 - Internet connection
 - Root/sudo access
 

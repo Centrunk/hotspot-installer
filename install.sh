@@ -2,7 +2,7 @@
 #
 # Centrunk DVMHost Installation Script
 # Automates installation on Raspberry Pi OS Bookworm/Trixie or Debian Trixie
-# (64-bit aarch64/x86_64). Minimum 2GB RAM.
+# (64-bit aarch64/x86_64). Minimum 4GB RAM.
 #
 # Usage: sudo ./install.sh [options]
 #   Options:
@@ -31,7 +31,7 @@ NC='\033[0m' # No Color
 
 # Installer build timestamp. Auto-updated by .githooks/pre-commit on every commit.
 # Do not edit this line by hand — see .githooks/pre-commit and README.md.
-INSTALLER_VERSION="2026-06-16 20:46:50 UTC"
+INSTALLER_VERSION="2026-06-17 00:00:46 UTC"
 
 # Binary download URL
 DVMHOST_BINS_REPO="https://github.com/Centrunk/dvmbins/raw/master"
@@ -344,7 +344,7 @@ check_platform() {
     fi
 }
 
-# Verify the system has enough RAM (minimum 2GB). Treated as part of platform
+# Verify the system has enough RAM (minimum 4GB). Treated as part of platform
 # verification, so --skip-platform-check bypasses it too.
 check_memory() {
     if [[ "$SKIP_PLATFORM_CHECK" == "true" ]]; then
@@ -355,9 +355,9 @@ check_memory() {
 
     # Minimum required RAM. We compare against MemTotal from /proc/meminfo, which
     # is always somewhat less than installed RAM (kernel/GPU/CMA reservations).
-    # A literal 2,097,152 kB (2 GiB) would falsely reject genuine 2GB hardware,
-    # so the floor is set ~7% lower at 1,900,000 kB (~1.86 GiB).
-    local min_kb=1900000
+    # A literal 4,194,304 kB (4 GiB) would falsely reject genuine 4GB hardware,
+    # so the floor is set ~7% lower at 3,900,000 kB (~3.72 GiB).
+    local min_kb=3900000
 
     local mem_kb
     mem_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
@@ -377,7 +377,7 @@ check_memory() {
     fi
 
     echo ""
-    print_warning "This installer recommends a minimum of 2GB of RAM"
+    print_warning "This installer recommends a minimum of 4GB of RAM"
     print_warning "Detected: ${mem_mb} MB"
     echo ""
     if [[ "$NON_INTERACTIVE" == "true" ]]; then
