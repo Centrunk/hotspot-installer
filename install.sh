@@ -12,7 +12,6 @@
 #     --skip-platform-check  Skip platform verification (for testing)
 #     --skip-device-setup    Skip device authorization config provisioning
 #     --skip-user-setup      Skip ctrs service account creation
-#     --skip-osquery         Skip osquery endpoint monitoring installation
 #     --ctrs-url <url>       CTRS server URL (default: https://my.centrunk.net)
 #     -y, --yes              Non-interactive mode (assume yes to prompts)
 #     --help                 Show this help message
@@ -31,16 +30,13 @@ NC='\033[0m' # No Color
 
 # Installer build timestamp. Auto-updated by .githooks/pre-commit on every commit.
 # Do not edit this line by hand — see .githooks/pre-commit and README.md.
-INSTALLER_VERSION="2026-06-17 01:57:28 UTC"
+INSTALLER_VERSION="2026-08-16 13:58:47 UTC"
 
 # Binary download URL
 DVMHOST_BINS_REPO="https://github.com/Centrunk/dvmbins/raw/master"
 
 # Installer repo (for downloading service files, etc. when running via pipe)
 INSTALLER_REPO_RAW="https://raw.githubusercontent.com/Centrunk/hotspot-installer/main"
-
-# Fleet osquery enrollment
-FLEET_ENROLL_SECRET="73qNTG5UKGwt6VRb99F7o7JueQv3Iqqa"
 
 # CTRS server URL (for device authorization flow)
 CTRS_URL="${CTRS_URL:-https://my.centrunk.net}"
@@ -52,7 +48,6 @@ SKIP_FIRMWARE_BUILD=false
 SKIP_PLATFORM_CHECK=false
 SKIP_DEVICE_SETUP=false
 SKIP_USER_SETUP=false
-SKIP_OSQUERY=false
 NON_INTERACTIVE=false
 DEVICE_SETUP_COMPLETED=false
 FIRMWARE_CHANGED=true
@@ -75,7 +70,7 @@ STATUS_NETBIRD_CONNECT=""
 STATUS_SERVICES=""
 STATUS_USER_SETUP=""
 STATUS_HOSTNAME=""
-STATUS_OSQUERY=""
+STATUS_OSQUERY_REMOVE=""
 STATUS_PERMISSIONS=""
 
 # Determine the real (non-root) user who invoked this script.
@@ -109,10 +104,6 @@ while [[ $# -gt 0 ]]; do
             SKIP_USER_SETUP=true
             shift
             ;;
-        --skip-osquery)
-            SKIP_OSQUERY=true
-            shift
-            ;;
         --ctrs-url)
             CTRS_URL="$2"
             shift 2
@@ -133,7 +124,6 @@ while [[ $# -gt 0 ]]; do
             echo "  --skip-platform-check  Skip platform verification (for testing)"
             echo "  --skip-device-setup    Skip device authorization config provisioning"
             echo "  --skip-user-setup      Skip ctrs service account creation"
-            echo "  --skip-osquery         Skip osquery endpoint monitoring installation"
             echo "  --ctrs-url <url>       CTRS server URL (default: https://my.centrunk.net)"
             echo "  -y, --yes              Non-interactive mode (assume yes to prompts)"
             echo "  --help                 Show this help message"
@@ -422,91 +412,38 @@ install_prerequisites() {
     STATUS_PREREQUISITES="done"
 }
 
-# Install osquery endpoint monitoring
-install_osquery() {
-    if [[ "$SKIP_OSQUERY" == "true" ]]; then
-        print_warning "Skipping osquery installation (--skip-osquery flag)"
-        STATUS_OSQUERY="skipped"
+# Remove osquery endpoint monitoring left behind by older installer versions.
+# osquery is no longer part of this product; a re-run must clean it off devices
+# that were provisioned by a previous release. No-op on a clean system.
+remove_osquery() {
+    local osquery_repo="/etc/apt/sources.list.d/osquery.list"
+    local osquery_keyring="/usr/share/keyrings/osquery-archive-keyring.gpg"
+
+    # Nothing to do unless the binary, the unit, or any leftover path is present
+    if ! command -v osqueryd &>/dev/null \
+        && ! systemctl list-unit-files osqueryd.service &>/dev/null \
+        && [[ ! -e /etc/osquery && ! -e /var/osquery && ! -e "$osquery_repo" ]]; then
+        STATUS_OSQUERY_REMOVE="not needed"
         return
     fi
 
-    # Deploy configuration (even if already installed, keep config current)
-    deploy_osquery_config() {
-        local conf_url="${INSTALLER_REPO_RAW}/osquery/osquery.conf"
-        local flags_url="${INSTALLER_REPO_RAW}/osquery/osquery.flags"
+    print_status "Removing osquery (no longer used by Centrunk)..."
 
-        print_status "Deploying osquery configuration..."
-        mkdir -p /etc/osquery
+    systemctl stop osqueryd &>/dev/null || true
+    systemctl disable osqueryd &>/dev/null || true
 
-        # Download JSON config (FIM paths)
-        if ! curl -fsSL -o /etc/osquery/osquery.conf "$conf_url"; then
-            print_warning "Failed to download osquery.conf, writing minimal default"
-            cat > /etc/osquery/osquery.conf << 'OSQEOF'
-{
-  "file_paths": {
-    "centrunk_configs": ["/opt/centrunk/configs/%%"],
-    "centrunk_binaries": ["/opt/centrunk/dvmhost/dvmhost"]
-  },
-  "file_accesses": ["centrunk_configs", "centrunk_binaries"]
-}
-OSQEOF
-        fi
+    # Purge rather than remove so packaged conffiles go too
+    apt-get purge -y osquery &>/dev/null || true
 
-        # Download flagfile (CLI flags for TLS/Fleet enrollment)
-        if ! curl -fsSL -o /etc/osquery/osquery.flags "$flags_url"; then
-            print_warning "Failed to download osquery.flags, writing minimal default"
-            cat > /etc/osquery/osquery.flags << 'FLAGEOF'
---config_plugin=tls
---logger_plugin=tls
---logger_path=/var/log/osquery
---database_path=/var/osquery/osquery.db
---tls_hostname=fleet.tatrs.org
---enroll_secret_path=/etc/osquery/enroll_secret
---enroll_tls_endpoint=/api/osquery/enroll
---config_tls_endpoint=/api/v1/osquery/config
---logger_tls_endpoint=/api/v1/osquery/log
---distributed_plugin=tls
---distributed_tls_read_endpoint=/api/v1/osquery/distributed/read
---distributed_tls_write_endpoint=/api/v1/osquery/distributed/write
---tls_server_certs=/etc/ssl/certs/ca-certificates.crt
-FLAGEOF
-        fi
+    # Drops the Fleet enroll secret and the local osquery database/logs
+    rm -rf /etc/osquery /var/osquery /var/log/osquery
 
-        # Write Fleet enroll secret
-        echo "$FLEET_ENROLL_SECRET" > /etc/osquery/enroll_secret
-        chmod 600 /etc/osquery/enroll_secret
-    }
+    # Remove the apt repo so later apt-get runs don't fail on an unreachable source
+    rm -f "$osquery_repo" "$osquery_keyring"
+    apt-get update -qq || true
 
-    # Idempotent: skip install if already present
-    if command -v osqueryd &>/dev/null; then
-        print_status "osquery already installed"
-        deploy_osquery_config
-        STATUS_OSQUERY="already installed"
-        return
-    fi
-
-    print_status "Installing osquery..."
-
-    # Import the osquery GPG signing key (modern signed-by approach)
-    curl -fsSL https://pkg.osquery.io/deb/pubkey.gpg \
-        | gpg --dearmor -o /usr/share/keyrings/osquery-archive-keyring.gpg
-
-    # Add the official osquery apt repository
-    local arch
-    arch="$(dpkg --print-architecture)"
-    echo "deb [arch=${arch} signed-by=/usr/share/keyrings/osquery-archive-keyring.gpg] https://pkg.osquery.io/deb deb main" \
-        > /etc/apt/sources.list.d/osquery.list
-
-    apt-get update -qq
-    apt-get install -y osquery
-
-    deploy_osquery_config
-
-    # Enable and start the daemon immediately
-    systemctl enable --now osqueryd
-
-    print_status "osquery installed and running"
-    STATUS_OSQUERY="installed"
+    print_status "osquery removed"
+    STATUS_OSQUERY_REMOVE="removed"
 }
 
 # Install Netbird
@@ -1333,7 +1270,7 @@ print_summary() {
     print_step "Platform check"       "$STATUS_PLATFORM"
     print_step "Memory check"         "$STATUS_MEMORY"
     print_step "Prerequisites"        "$STATUS_PREREQUISITES"
-    print_step "Osquery monitoring"   "$STATUS_OSQUERY"
+    print_step "Osquery removal"      "$STATUS_OSQUERY_REMOVE"
     print_step "Netbird install"      "$STATUS_NETBIRD_INSTALL"
     print_step "Directory structure"  "$STATUS_DIRECTORIES"
     print_step "Firmware source"      "$STATUS_FIRMWARE_CLONE"
@@ -1409,7 +1346,7 @@ main() {
     setup_ctrs_user
     stop_running_services
     install_prerequisites
-    install_osquery
+    remove_osquery
     install_netbird
     create_directories
     clone_firmware
