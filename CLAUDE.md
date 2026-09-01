@@ -36,7 +36,10 @@ TODO.md                  # Project backlog
 2. `check_platform` - Verify Pi OS Bookworm/Trixie or Debian Trixie, 64-bit aarch64/x86_64 (skippable)
 2a. `check_memory` - Verify minimum 4GB RAM (overridable warning; skipped by `--skip-platform-check`)
 3. `setup_ctrs_user` - Create `ctrs` service account with passwordless sudo, SSH key-only auth, sshd Match block (requires user consent)
-4. `install_prerequisites` - apt packages: git, curl, wget, jq, unzip, xz-utils, stm32flash, make, gcc-arm-none-eabi, binutils-arm-none-eabi, libnewlib-arm-none-eabi
+3a. `stop_running_services` - Stop any running centrunk units before touching the install
+4. `install_prerequisites` - apt packages: git, curl, wget, jq, unzip, xz-utils, stm32flash, make, gcc-arm-none-eabi, binutils-arm-none-eabi, libnewlib-arm-none-eabi, gpg, sudo, ca-certificates, vim, libdw-dev
+4a. `upgrade_system` - `apt-get upgrade -y` of all installed packages (skipped by `--skip-upgrade`; non-fatal on failure)
+4b. `remove_osquery` - Purge osquery and its apt repo from previously-provisioned devices
 5. `install_netbird` - VPN client via `pkgs.netbird.io/install.sh` (skips if already running)
 6. `create_directories` - `/opt/centrunk/{dvmhost,configs}`, `/var/log/centrunk/`
 7. `clone_firmware` - Clone `DVMProject/dvmfirmware-hs` to `/opt/centrunk/dvmfirmware-hs`
@@ -44,8 +47,12 @@ TODO.md                  # Project backlog
 9. `remove_console_params` - Strip `console=` params from boot cmdline
 10. `disable_bluetooth` - Pi model-specific dtoverlay config, disable/mask BT and serial services
 11. `install_dvmhost` - Download pre-built binary from `Centrunk/dvmbins` (arch-specific `.tar.xz`)
-12. `setup_device_config` - Device authorization flow: register with CTRS server, display code, poll for authorization, download and extract config ZIP to `/opt/centrunk/configs/`
+12. `setup_device_config` - Device authorization flow: register with CTRS server, display code, poll for authorization, download and extract config ZIP to `/opt/centrunk/configs/`. Also captures the `X-Netbird-Setup-Key` and `X-Netbird-Hostname` response headers, and caches the latter to `/opt/centrunk/netbird-hostname`
+12a. `load_netbird_hostname` - Recover the cached device name when this run never reached CTRS (`--skip-device-setup`, or declining the overwrite prompt). A name from the current run always wins
+12b. `set_hostname` - Rename the box to the `X-Netbird-Hostname` value, but **only** if the current hostname is still the stock `raspberrypi`; a deliberately-set hostname is left alone
+12c. `connect_netbird` - `netbird up` with the setup key, passing `--hostname "$NETBIRD_HOSTNAME"` so the VPN peer name is correct regardless of the system hostname
 13. `install_services` - Download systemd units from this repo's raw GitHub URL, enable (don't start)
+13a. `fix_permissions` - Apply ownership/permissions across the install tree
 14. `print_summary` - Show next steps including Netbird setup key and reboot reminder
 
 ### CLI Options
@@ -55,6 +62,7 @@ TODO.md                  # Project backlog
 - `--skip-platform-check` - Bypass platform verification (for testing)
 - `--skip-device-setup` - Skip device authorization config provisioning
 - `--skip-user-setup` - Skip ctrs service account creation
+- `--skip-upgrade` - Skip the full package upgrade (used by CI and `test-local.sh`, where the emulated run would otherwise be very slow)
 - `--ctrs-url <url>` - CTRS server URL (default: `https://my.centrunk.net`); also settable via `CTRS_URL` env var
 - `-y` / `--yes` - Non-interactive mode (auto-detected when piped)
 - `--help` - Show usage
@@ -68,6 +76,7 @@ Script detects piped input (`[[ ! -t 0 ]]`) and auto-enables non-interactive mod
 /opt/centrunk/
 ├── dvmhost/dvmhost          # Pre-built binary
 ├── dvmfirmware-hs/          # Firmware source (cloned from DVMProject)
+├── netbird-hostname         # Cached CTRS-assigned device name (survives re-provisioning)
 └── configs/
     ├── configCC.yml          # Control Channel config (user-created)
     └── configVC.yml          # Voice Channel config (user-created)
@@ -106,7 +115,7 @@ Script detects piped input (`[[ ! -t 0 ]]`) and auto-enables non-interactive mod
 ## CI/CD Pipeline
 
 ### Jobs (`.github/workflows/test-install.yml`)
-1. **test-install-arm64** - Real Raspberry Pi OS image via `pguyot/arm-runner-action@v2`, runs full install with `--skip-netbird --skip-services`
+1. **test-install-arm64** - Real Raspberry Pi OS image via `pguyot/arm-runner-action@v2`, runs full install with `--skip-netbird --skip-services --skip-upgrade`
 2. **test-syntax** - `shellcheck` on `install.sh`, validates systemd unit structure (`[Unit]`, `[Service]`, `[Install]` sections)
 3. **test-install-x86** - `bash -n` syntax check, `--help` flag test
 4. **notify-discord** - Posts results to Discord via separate webhooks for success (`DISCORD_WEBHOOK_SUCCESS`) and failure (`DISCORD_WEBHOOK_FAILURE`)
@@ -120,7 +129,7 @@ Script detects piped input (`[[ ! -t 0 ]]`) and auto-enables non-interactive mod
 
 ### Local Testing (`test-local.sh`)
 - Uses Docker/Podman with QEMU ARM64 emulation
-- Runs `debian:bookworm-slim` container with `--skip-netbird --skip-services --skip-platform-check`
+- Runs `debian:bookworm-slim` container with `--skip-netbird --skip-services --skip-platform-check --skip-upgrade`
 - Verifies: directory structure, binary existence, binary is executable, binary architecture
 
 ### Verification Checks

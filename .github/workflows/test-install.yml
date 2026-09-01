@@ -53,7 +53,8 @@ jobs:
 
             # Run installation (skip netbird and services for CI testing)
             # Platform check should PASS since we're on real Raspberry Pi OS
-            /hotspot-installer/install.sh --skip-netbird --skip-services
+            # Package upgrade is skipped: this job runs under QEMU ARM64 emulation
+            /hotspot-installer/install.sh --skip-netbird --skip-services --skip-upgrade
 
             # Verify the build was successful
             echo "Verifying installation..."

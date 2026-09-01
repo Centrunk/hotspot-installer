@@ -12,6 +12,7 @@
 #     --skip-platform-check  Skip platform verification (for testing)
 #     --skip-device-setup    Skip device authorization config provisioning
 #     --skip-user-setup      Skip ctrs service account creation
+#     --skip-upgrade         Skip the full package upgrade
 #     --ctrs-url <url>       CTRS server URL (default: https://my.centrunk.net)
 #     -y, --yes              Non-interactive mode (assume yes to prompts)
 #     --help                 Show this help message
@@ -22,6 +23,10 @@
 
 set -e  # Exit on any error
 
+# Never let apt/dpkg block on a debconf prompt - this script also runs unattended
+# via the piped one-liner, where there is no terminal to answer one.
+export DEBIAN_FRONTEND=noninteractive
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -30,7 +35,7 @@ NC='\033[0m' # No Color
 
 # Installer build timestamp. Auto-updated by .githooks/pre-commit on every commit.
 # Do not edit this line by hand — see .githooks/pre-commit and README.md.
-INSTALLER_VERSION="2026-08-16 13:58:47 UTC"
+INSTALLER_VERSION="2026-09-01 01:39:04 UTC"
 
 # Binary download URL
 DVMHOST_BINS_REPO="https://github.com/Centrunk/dvmbins/raw/master"
@@ -41,6 +46,10 @@ INSTALLER_REPO_RAW="https://raw.githubusercontent.com/Centrunk/hotspot-installer
 # CTRS server URL (for device authorization flow)
 CTRS_URL="${CTRS_URL:-https://my.centrunk.net}"
 
+# Where the CTRS-assigned device name is cached between runs. Deliberately outside
+# /opt/centrunk/configs/, which remove_existing_install wipes on every re-provision.
+NETBIRD_HOSTNAME_FILE="/opt/centrunk/netbird-hostname"
+
 # Default options
 SKIP_NETBIRD=false
 SKIP_SERVICES=false
@@ -48,16 +57,19 @@ SKIP_FIRMWARE_BUILD=false
 SKIP_PLATFORM_CHECK=false
 SKIP_DEVICE_SETUP=false
 SKIP_USER_SETUP=false
+SKIP_UPGRADE=false
 NON_INTERACTIVE=false
 DEVICE_SETUP_COMPLETED=false
 FIRMWARE_CHANGED=true
 NETBIRD_SETUP_KEY=""
+NETBIRD_HOSTNAME=""
 NETBIRD_AUTO_CONNECTED=false
 
 # Step result tracking (set by each function, read by print_summary)
 STATUS_PLATFORM=""
 STATUS_MEMORY=""
 STATUS_PREREQUISITES=""
+STATUS_UPGRADE=""
 STATUS_NETBIRD_INSTALL=""
 STATUS_DIRECTORIES=""
 STATUS_FIRMWARE_CLONE=""
@@ -104,6 +116,10 @@ while [[ $# -gt 0 ]]; do
             SKIP_USER_SETUP=true
             shift
             ;;
+        --skip-upgrade)
+            SKIP_UPGRADE=true
+            shift
+            ;;
         --ctrs-url)
             CTRS_URL="$2"
             shift 2
@@ -124,6 +140,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --skip-platform-check  Skip platform verification (for testing)"
             echo "  --skip-device-setup    Skip device authorization config provisioning"
             echo "  --skip-user-setup      Skip ctrs service account creation"
+            echo "  --skip-upgrade         Skip the full package upgrade"
             echo "  --ctrs-url <url>       CTRS server URL (default: https://my.centrunk.net)"
             echo "  -y, --yes              Non-interactive mode (assume yes to prompts)"
             echo "  --help                 Show this help message"
@@ -343,11 +360,12 @@ check_memory() {
         return
     fi
 
-    # Minimum required RAM. We compare against MemTotal from /proc/meminfo, which
-    # is always somewhat less than installed RAM (kernel/GPU/CMA reservations).
-    # A literal 4,194,304 kB (4 GiB) would falsely reject genuine 4GB hardware,
-    # so the floor is set ~7% lower at 3,900,000 kB (~3.72 GiB).
-    local min_kb=3900000
+    # Minimum required RAM. MemTotal excludes the GPU/CMA reservation and kernel
+    # reserves, so a genuine 4GB Pi reports as little as ~3.45 GiB (256-512 MB
+    # CMA with the KMS driver, or a legacy gpu_mem firmware split). The floor is
+    # set at 3,400,000 kB (~3.24 GiB) to accept every 4GB configuration while
+    # still rejecting 2GB hardware (~1.9 GiB).
+    local min_kb=3400000
 
     local mem_kb
     mem_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
@@ -410,6 +428,29 @@ install_prerequisites() {
 
     print_status "Prerequisites installed successfully"
     STATUS_PREREQUISITES="done"
+}
+
+# Bring installed packages up to date. Uses `upgrade` rather than dist-upgrade so an
+# unattended run can never remove a package a live hotspot depends on. The Dpkg
+# options keep the on-disk version of any config file that has been modified.
+upgrade_system() {
+    if [[ "$SKIP_UPGRADE" == "true" ]]; then
+        print_warning "Skipping package upgrade (--skip-upgrade flag)"
+        STATUS_UPGRADE="skipped"
+        return
+    fi
+
+    print_status "Upgrading installed packages (this may take a while)..."
+    # Package lists were refreshed by install_prerequisites moments ago.
+    if apt-get upgrade -y \
+        -o Dpkg::Options::="--force-confdef" \
+        -o Dpkg::Options::="--force-confold"; then
+        print_status "Packages upgraded"
+        STATUS_UPGRADE="done"
+    else
+        print_warning "Package upgrade failed - continuing"
+        STATUS_UPGRADE="failed"
+    fi
 }
 
 # Remove osquery endpoint monitoring left behind by older installer versions.
@@ -874,6 +915,8 @@ setup_device_config() {
 
     # Extract NetBird setup key if present in response headers
     NETBIRD_SETUP_KEY=$(grep -i 'X-Netbird-Setup-Key' "$tmp_headers" 2>/dev/null | cut -d' ' -f2 | tr -d '\r\n' || true)
+    # The server is the source of truth for this device's name (hs-<rid4>-<rfss>-<site_hex>)
+    NETBIRD_HOSTNAME=$(grep -i 'X-Netbird-Hostname' "$tmp_headers" 2>/dev/null | cut -d' ' -f2 | tr -d '\r\n' || true)
     rm -f "$tmp_headers"
 
     # 5. Clear existing configs and services, then extract new configs
@@ -887,40 +930,62 @@ setup_device_config() {
     # 6. Cleanup
     rm -f "$tmp_zip"
 
+    # 7. Cache the assigned device name for re-runs that skip this flow
+    save_netbird_hostname
+
     DEVICE_SETUP_COMPLETED=true
     STATUS_DEVICE_SETUP="provisioned"
     print_status "Configuration files installed to /opt/centrunk/configs/"
 }
 
-# Set system hostname to ctrs-RFSS-SITE based on device config
+# myCTRS only hands out the device name during the authorization flow, so cache it.
+# Without this, a re-run that skips device setup (--skip-device-setup, or declining
+# the overwrite prompt) would have no name to give NetBird.
+save_netbird_hostname() {
+    if [[ -z "${NETBIRD_HOSTNAME:-}" ]]; then
+        return
+    fi
+
+    printf '%s\n' "$NETBIRD_HOSTNAME" > "$NETBIRD_HOSTNAME_FILE"
+    chmod 644 "$NETBIRD_HOSTNAME_FILE"
+}
+
+# Recover the cached device name when this run never talked to CTRS. A name from the
+# current run always wins, so a device renamed server-side picks the new one up.
+load_netbird_hostname() {
+    if [[ -n "${NETBIRD_HOSTNAME:-}" ]]; then
+        return
+    fi
+    if [[ ! -f "$NETBIRD_HOSTNAME_FILE" ]]; then
+        return
+    fi
+
+    NETBIRD_HOSTNAME=$(tr -d '\r\n' < "$NETBIRD_HOSTNAME_FILE")
+    if [[ -n "$NETBIRD_HOSTNAME" ]]; then
+        print_status "Using saved device name: ${NETBIRD_HOSTNAME}"
+    fi
+}
+
+# Set the system hostname to the name myCTRS assigned this device, but only when the
+# box is still on the stock Pi OS default. A hostname an operator chose deliberately
+# is left alone; NetBird is told the right name either way (see connect_netbird).
 set_hostname() {
-    local config_file="/opt/centrunk/configs/configCC.yml"
-
-    if [[ ! -f "$config_file" ]]; then
-        print_warning "configCC.yml not found, skipping hostname configuration"
-        STATUS_HOSTNAME="no config"
-        return
-    fi
-
-    local rfss_id site_id
-    rfss_id=$(grep 'rfssId:' "$config_file" | awk '{print $2}' | tr -d '\r\n')
-    site_id=$(grep 'siteId:' "$config_file" | awk '{print $2}' | tr -d '\r\n')
-
-    if [[ -z "$rfss_id" || -z "$site_id" ]]; then
-        print_warning "Could not parse rfssId/siteId from configCC.yml, skipping hostname"
-        STATUS_HOSTNAME="missing config values"
-        return
-    fi
-
-    local new_hostname="ctrs-${rfss_id}-${site_id}"
     local old_hostname
     old_hostname=$(hostname)
 
-    if [[ "$old_hostname" == "$new_hostname" ]]; then
-        print_status "Hostname already set to ${new_hostname}"
-        STATUS_HOSTNAME="${new_hostname}"
+    if [[ "$old_hostname" != "raspberrypi" ]]; then
+        print_status "Hostname '${old_hostname}' is not the default - leaving it unchanged"
+        STATUS_HOSTNAME="unchanged (${old_hostname})"
         return
     fi
+
+    if [[ -z "${NETBIRD_HOSTNAME:-}" ]]; then
+        print_warning "No hostname provided by CTRS, leaving hostname as '${old_hostname}'"
+        STATUS_HOSTNAME="no server hostname"
+        return
+    fi
+
+    local new_hostname="$NETBIRD_HOSTNAME"
 
     hostnamectl set-hostname "$new_hostname"
     # Update /etc/hosts: replace old hostname with new, or add entry
@@ -958,11 +1023,20 @@ connect_netbird() {
         rm -f /etc/netbird/config.json
     fi
 
+    # Join under the name CTRS assigned, regardless of what the system hostname is.
+    local nb_args=(
+        --management-url https://netbird.centrunk.net
+        --allow-server-ssh
+        --setup-key "$NETBIRD_SETUP_KEY"
+    )
+    if [[ -n "${NETBIRD_HOSTNAME:-}" ]]; then
+        nb_args+=(--hostname "$NETBIRD_HOSTNAME")
+    else
+        print_warning "No hostname provided by CTRS - NetBird will use the system hostname"
+    fi
+
     print_status "NetBird setup key received from CTRS, joining VPN..."
-    if netbird up \
-        --management-url https://netbird.centrunk.net \
-        --allow-server-ssh \
-        --setup-key "$NETBIRD_SETUP_KEY"; then
+    if netbird up "${nb_args[@]}"; then
         print_status "NetBird connected successfully"
         NETBIRD_AUTO_CONNECTED=true
         STATUS_NETBIRD_CONNECT="connected"
@@ -1270,6 +1344,7 @@ print_summary() {
     print_step "Platform check"       "$STATUS_PLATFORM"
     print_step "Memory check"         "$STATUS_MEMORY"
     print_step "Prerequisites"        "$STATUS_PREREQUISITES"
+    print_step "Package upgrade"      "$STATUS_UPGRADE"
     print_step "Osquery removal"      "$STATUS_OSQUERY_REMOVE"
     print_step "Netbird install"      "$STATUS_NETBIRD_INSTALL"
     print_step "Directory structure"  "$STATUS_DIRECTORIES"
@@ -1279,7 +1354,7 @@ print_summary() {
     print_step "Bluetooth/UART"       "$STATUS_BLUETOOTH"
     print_step "DVMHost binary"       "$STATUS_DVMHOST"
     print_step "Device config"        "$STATUS_DEVICE_SETUP"
-    print_step "Hostname"              "$STATUS_HOSTNAME"
+    print_step "Hostname"             "$STATUS_HOSTNAME"
     print_step "Netbird VPN"          "$STATUS_NETBIRD_CONNECT"
     print_step "Systemd services"     "$STATUS_SERVICES"
     print_step "Service account"      "$STATUS_USER_SETUP"
@@ -1314,7 +1389,11 @@ print_summary() {
         fi
         if [[ "$STATUS_NETBIRD_CONNECT" == "failed" && -n "${NETBIRD_SETUP_KEY:-}" ]]; then
             echo "  - Netbird auto-connect failed. Retry manually:"
-            echo "      sudo netbird up --management-url https://netbird.centrunk.net --allow-server-ssh --setup-key ${NETBIRD_SETUP_KEY}"
+            local retry_hostname_arg=""
+            if [[ -n "${NETBIRD_HOSTNAME:-}" ]]; then
+                retry_hostname_arg=" --hostname ${NETBIRD_HOSTNAME}"
+            fi
+            echo "      sudo netbird up --management-url https://netbird.centrunk.net --allow-server-ssh --setup-key ${NETBIRD_SETUP_KEY}${retry_hostname_arg}"
         fi
         if [[ "$STATUS_NETBIRD_CONNECT" == "no setup key" && "$SKIP_NETBIRD" != "true" && "${NETBIRD_ALREADY_RUNNING:-false}" != "true" ]]; then
             echo "  - Configure Netbird: re-run installer without --skip-device-setup to get a setup key"
@@ -1346,6 +1425,7 @@ main() {
     setup_ctrs_user
     stop_running_services
     install_prerequisites
+    upgrade_system
     remove_osquery
     install_netbird
     create_directories
@@ -1355,6 +1435,7 @@ main() {
     disable_bluetooth
     install_dvmhost
     setup_device_config
+    load_netbird_hostname
     set_hostname
     connect_netbird
     install_services
