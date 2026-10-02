@@ -14,6 +14,7 @@
 #     --skip-user-setup      Skip ctrs service account creation
 #     --skip-upgrade         Skip the full package upgrade
 #     --ctrs-url <url>       CTRS server URL (default: https://my.centrunk.net)
+#     --claim-token-file <path>  myCTRS claim token file (headless pairing)
 #     -y, --yes              Non-interactive mode (assume yes to prompts)
 #     --help                 Show this help message
 #
@@ -35,7 +36,7 @@ NC='\033[0m' # No Color
 
 # Installer build timestamp. Auto-updated by .githooks/pre-commit on every commit.
 # Do not edit this line by hand — see .githooks/pre-commit and README.md.
-INSTALLER_VERSION="2026-09-01 01:39:04 UTC"
+INSTALLER_VERSION="2026-10-02 03:59:56 UTC"
 
 # Binary download URL
 DVMHOST_BINS_REPO="https://github.com/Centrunk/dvmbins/raw/master"
@@ -49,6 +50,11 @@ CTRS_URL="${CTRS_URL:-https://my.centrunk.net}"
 # Where the CTRS-assigned device name is cached between runs. Deliberately outside
 # /opt/centrunk/configs/, which remove_existing_install wipes on every re-provision.
 NETBIRD_HOSTNAME_FILE="/opt/centrunk/netbird-hostname"
+
+# Optional myCTRS claim token file (headless pairing). The token routes this device
+# into its owner's "Waiting devices" queue; it never authorizes anything by itself.
+CTRS_CLAIM_TOKEN_FILE="${CTRS_CLAIM_TOKEN_FILE:-}"
+CLAIM_TOKEN=""
 
 # Default options
 SKIP_NETBIRD=false
@@ -124,6 +130,10 @@ while [[ $# -gt 0 ]]; do
             CTRS_URL="$2"
             shift 2
             ;;
+        --claim-token-file)
+            CTRS_CLAIM_TOKEN_FILE="$2"
+            shift 2
+            ;;
         -y|--yes)
             NON_INTERACTIVE=true
             shift
@@ -142,6 +152,9 @@ while [[ $# -gt 0 ]]; do
             echo "  --skip-user-setup      Skip ctrs service account creation"
             echo "  --skip-upgrade         Skip the full package upgrade"
             echo "  --ctrs-url <url>       CTRS server URL (default: https://my.centrunk.net)"
+            echo "  --claim-token-file <path>"
+            echo "                         myCTRS claim token file for headless pairing"
+            echo "                         (or set CTRS_CLAIM_TOKEN_FILE)"
             echo "  -y, --yes              Non-interactive mode (assume yes to prompts)"
             echo "  --help                 Show this help message"
             echo ""
@@ -794,6 +807,188 @@ remove_existing_install() {
     rm -rf /opt/centrunk/configs/*
 }
 
+# Read the optional myCTRS claim token. Done early so a bad token file fails in
+# seconds, not after the firmware build. The token is never echoed.
+load_claim_token() {
+    if [[ -z "$CTRS_CLAIM_TOKEN_FILE" || "$SKIP_DEVICE_SETUP" == "true" ]]; then
+        return
+    fi
+
+    if [[ ! -f "$CTRS_CLAIM_TOKEN_FILE" || ! -r "$CTRS_CLAIM_TOKEN_FILE" ]]; then
+        print_error "Claim token file is missing or unreadable: ${CTRS_CLAIM_TOKEN_FILE}"
+        exit 1
+    fi
+
+    CLAIM_TOKEN=$(tr -d '[:space:]' < "$CTRS_CLAIM_TOKEN_FILE")
+    if [[ -z "$CLAIM_TOKEN" ]]; then
+        print_error "Claim token file is empty: ${CTRS_CLAIM_TOKEN_FILE}"
+        exit 1
+    fi
+    # myCTRS issues URL-safe base64; anything else is a corrupt or wrong file.
+    if [[ ! "$CLAIM_TOKEN" =~ ^[A-Za-z0-9_-]+$ ]]; then
+        CLAIM_TOKEN=""
+        print_error "Claim token file does not contain a valid token: ${CTRS_CLAIM_TOKEN_FILE}"
+        exit 1
+    fi
+    print_status "Claim token loaded from ${CTRS_CLAIM_TOKEN_FILE}"
+}
+
+# JSON body for a claimed registration, written to stdout. printf is a shell
+# builtin, so the token never appears on any process's command line.
+# jq is installed by install_prerequisites before this runs.
+build_claim_body() {
+    printf '%s' "$CLAIM_TOKEN" | jq -jRc '{claim_token: .}'
+}
+
+# Fatal: the server rejected the claim token (HTTP 410) or did not honor it.
+# Exiting ends the loop - the first-boot service caps its retries.
+claim_token_invalid() {
+    print_error "Claim token is no longer valid (expired, revoked or already used). Mint a new one in myCTRS and re-flash the card."
+    exit 1
+}
+
+# curl wrapper for the myCTRS device API. Prints the response body followed by a
+# final line holding the HTTP status (000 when curl could not get a response).
+# Deliberately no -f, so callers can tell a rate limit from an outage.
+ctrs_http() {
+    curl -s -w '\n%{http_code}' "$@" || true
+}
+
+# Worth retrying: no response at all, rate limited (django-ratelimit answers 403),
+# or a server-side error.
+is_transient_http() {
+    case "$1" in
+        000|403|429|5??) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Exponential backoff, capped at 60s
+next_backoff() {
+    local next=$(( $1 * 2 ))
+    if (( next > 60 )); then
+        next=60
+    fi
+    echo "$next"
+}
+
+# Headless pairing with a claim token: register with the token, then poll until the
+# owner approves the device in myCTRS. Only used when a claim token is loaded; a run
+# without one uses the original interactive flow unchanged. Rides out code expiry and
+# transient server or network failures instead of exiting, since nobody is at the
+# console. Assigns user_code and device_secret in the caller's scope.
+claim_token_pairing() {
+    local response http_code body backoff status claimed poll_interval reregister
+
+    # Outer loop: one iteration per registration. Only "authorized" leaves it.
+    while true; do
+        # 1. Register (token goes in via stdin, never argv, so it cannot show up in ps)
+        backoff=5
+        while true; do
+            response=$(build_claim_body | ctrs_http -X POST \
+                -H "Content-Type: application/json" \
+                --data-binary @- \
+                "${CTRS_URL}/api/device/register/")
+            http_code="${response##*$'\n'}"
+            body="${response%$'\n'*}"
+
+            if [[ "$http_code" == 2?? ]]; then
+                break
+            fi
+            if [[ "$http_code" == "410" ]]; then
+                claim_token_invalid
+            fi
+            if is_transient_http "$http_code"; then
+                print_warning "Device registration failed (HTTP ${http_code}) - retrying in ${backoff}s..."
+                sleep "$backoff"
+                backoff=$(next_backoff "$backoff")
+                continue
+            fi
+            print_error "Failed to register device with ${CTRS_URL}/api/device/register/ (HTTP ${http_code})"
+            exit 1
+        done
+
+        user_code=$(echo "$body" | jq -r '.user_code')
+        device_secret=$(echo "$body" | jq -r '.device_secret')
+        poll_interval=$(echo "$body" | jq -r '.poll_interval // 5')
+        claimed=$(echo "$body" | jq -r '.claimed // false')
+        [[ "$poll_interval" =~ ^[0-9]+$ ]] || poll_interval=5
+
+        if [[ -z "$user_code" || "$user_code" == "null" ]]; then
+            print_error "Invalid response from device registration"
+            exit 1
+        fi
+        # A token the server did not honor is fatal: re-registering would only
+        # ever produce an unclaimed code nobody is watching for.
+        if [[ "$claimed" != "true" ]]; then
+            claim_token_invalid
+        fi
+
+        # 2. Display code and where to approve it
+        echo ""
+        echo "======================================================"
+        echo -e "  ${GREEN}DEVICE CODE:${NC}  ${YELLOW}${user_code}${NC}"
+        echo ""
+        echo -e "  This device is claimed — approve it at ${CTRS_URL%/}/device/claims/"
+        echo "======================================================"
+        echo ""
+        print_status "Waiting for approval in myCTRS..."
+
+        # 3. Poll until authorized
+        backoff=5
+        reregister=false
+        while true; do
+            response=$(ctrs_http \
+                -H "Authorization: Bearer ${device_secret}" \
+                "${CTRS_URL}/api/device/poll/${user_code}/")
+            http_code="${response##*$'\n'}"
+            body="${response%$'\n'*}"
+
+            if [[ "$http_code" != 2?? ]]; then
+                if is_transient_http "$http_code"; then
+                    print_warning "Failed to poll device status (HTTP ${http_code}) - retrying in ${backoff}s..."
+                    sleep "$backoff"
+                    backoff=$(next_backoff "$backoff")
+                    continue
+                fi
+                # 401/404: the server no longer knows this code. Start over.
+                print_warning "Device code rejected by server (HTTP ${http_code}) - registering again..."
+                reregister=true
+                break
+            fi
+            backoff=5
+
+            status=$(echo "$body" | jq -r '.status' 2>/dev/null || true)
+            case "$status" in
+                authorized)
+                    print_status "Device authorized! Downloading configuration..."
+                    break
+                    ;;
+                expired)
+                    print_warning "Device code expired - registering again..."
+                    reregister=true
+                    break
+                    ;;
+                consumed)
+                    print_error "Configuration was already downloaded. Please re-run the installer to get a new code."
+                    exit 1
+                    ;;
+                pending)
+                    sleep "$poll_interval"
+                    ;;
+                *)
+                    print_error "Unexpected status from server: $status"
+                    exit 1
+                    ;;
+            esac
+        done
+
+        if [[ "$reregister" != "true" ]]; then
+            return 0
+        fi
+    done
+}
+
 # Device authorization flow — register, display code, poll, download config
 setup_device_config() {
     if [[ "$SKIP_DEVICE_SETUP" == "true" ]]; then
@@ -821,6 +1016,13 @@ setup_device_config() {
 
     if [[ "$has_existing" == "true" ]]; then
         print_warning "Config files already exist in /opt/centrunk/configs/"
+        if [[ -n "$CLAIM_TOKEN" ]]; then
+            # Headless (claim token) runs have no terminal to ask, and must never
+            # wipe a working install on their own.
+            print_status "Claim token in use: keeping existing configuration and services (skipping re-pairing)"
+            STATUS_DEVICE_SETUP="kept existing"
+            return
+        fi
         print_warning "Existing centrunk.*.service units will also be removed."
         read -p "Overwrite existing configuration and services with a fresh download from myCTRS? (y/N) " -n 1 -r < /dev/tty
         echo
@@ -835,68 +1037,74 @@ setup_device_config() {
     print_status "Starting device authorization flow..."
     print_status "CTRS server: ${CTRS_URL}"
 
-    # 1. Register
-    local register_response
-    if ! register_response=$(curl -sf -X POST "${CTRS_URL}/api/device/register/"); then
-        print_error "Failed to register device with ${CTRS_URL}/api/device/register/"
-        exit 1
-    fi
-
-    local user_code device_secret verify_url poll_interval
-    user_code=$(echo "$register_response" | jq -r '.user_code')
-    device_secret=$(echo "$register_response" | jq -r '.device_secret')
-    verify_url=$(echo "$register_response" | jq -r '.verification_url_complete')
-    poll_interval=$(echo "$register_response" | jq -r '.poll_interval // 5')
-
-    if [[ -z "$user_code" || "$user_code" == "null" ]]; then
-        print_error "Invalid response from device registration"
-        exit 1
-    fi
-
-    # 2. Display code and URL
-    echo ""
-    echo "======================================================"
-    echo -e "  ${GREEN}DEVICE CODE:${NC}  ${YELLOW}${user_code}${NC}"
-    echo ""
-    echo -e "  Open this URL in a browser to authorize this device:"
-    echo -e "  ${GREEN}${verify_url}${NC}"
-    echo "======================================================"
-    echo ""
-    print_status "Waiting for authorization (code expires in 15 minutes)..."
-
-    # 3. Poll until authorized
-    while true; do
-        local status
-        if ! status=$(curl -sf \
-            -H "Authorization: Bearer ${device_secret}" \
-            "${CTRS_URL}/api/device/poll/${user_code}/" \
-            | jq -r '.status'); then
-            print_error "Failed to poll device status"
+    if [[ -n "$CLAIM_TOKEN" ]]; then
+        # Headless pairing; sets user_code and device_secret in this scope.
+        local user_code device_secret
+        claim_token_pairing
+    else
+        # 1. Register
+        local register_response
+        if ! register_response=$(curl -sf -X POST "${CTRS_URL}/api/device/register/"); then
+            print_error "Failed to register device with ${CTRS_URL}/api/device/register/"
             exit 1
         fi
 
-        case "$status" in
-            authorized)
-                print_status "Device authorized! Downloading configuration..."
-                break
-                ;;
-            expired)
-                print_error "Device code expired. Please re-run the installer."
+        local user_code device_secret verify_url poll_interval
+        user_code=$(echo "$register_response" | jq -r '.user_code')
+        device_secret=$(echo "$register_response" | jq -r '.device_secret')
+        verify_url=$(echo "$register_response" | jq -r '.verification_url_complete')
+        poll_interval=$(echo "$register_response" | jq -r '.poll_interval // 5')
+
+        if [[ -z "$user_code" || "$user_code" == "null" ]]; then
+            print_error "Invalid response from device registration"
+            exit 1
+        fi
+
+        # 2. Display code and URL
+        echo ""
+        echo "======================================================"
+        echo -e "  ${GREEN}DEVICE CODE:${NC}  ${YELLOW}${user_code}${NC}"
+        echo ""
+        echo -e "  Open this URL in a browser to authorize this device:"
+        echo -e "  ${GREEN}${verify_url}${NC}"
+        echo "======================================================"
+        echo ""
+        print_status "Waiting for authorization (code expires in 15 minutes)..."
+
+        # 3. Poll until authorized
+        while true; do
+            local status
+            if ! status=$(curl -sf \
+                -H "Authorization: Bearer ${device_secret}" \
+                "${CTRS_URL}/api/device/poll/${user_code}/" \
+                | jq -r '.status'); then
+                print_error "Failed to poll device status"
                 exit 1
-                ;;
-            consumed)
-                print_error "Configuration was already downloaded. Please re-run the installer to get a new code."
-                exit 1
-                ;;
-            pending)
-                sleep "$poll_interval"
-                ;;
-            *)
-                print_error "Unexpected status from server: $status"
-                exit 1
-                ;;
-        esac
-    done
+            fi
+
+            case "$status" in
+                authorized)
+                    print_status "Device authorized! Downloading configuration..."
+                    break
+                    ;;
+                expired)
+                    print_error "Device code expired. Please re-run the installer."
+                    exit 1
+                    ;;
+                consumed)
+                    print_error "Configuration was already downloaded. Please re-run the installer to get a new code."
+                    exit 1
+                    ;;
+                pending)
+                    sleep "$poll_interval"
+                    ;;
+                *)
+                    print_error "Unexpected status from server: $status"
+                    exit 1
+                    ;;
+            esac
+        done
+    fi
 
     # 4. Download config ZIP (capture headers for NetBird setup key)
     local tmp_zip tmp_headers
@@ -1420,6 +1628,7 @@ main() {
     echo ""
 
     check_root
+    load_claim_token
     check_platform
     check_memory
     setup_ctrs_user
