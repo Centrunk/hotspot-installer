@@ -47,7 +47,7 @@ TODO.md                  # Project backlog
 9. `remove_console_params` - Strip `console=` params from boot cmdline
 10. `disable_bluetooth` - Pi model-specific dtoverlay config, disable/mask BT and serial services
 11. `install_dvmhost` - Download pre-built binary from `Centrunk/dvmbins` (arch-specific `.tar.xz`)
-12. `setup_device_config` - Device authorization flow: register with CTRS server, display code, poll for authorization, download and extract config ZIP to `/opt/centrunk/configs/`. Also captures the `X-Netbird-Setup-Key` and `X-Netbird-Hostname` response headers, and caches the latter to `/opt/centrunk/netbird-hostname`
+12. `setup_device_config` - Device authorization flow: register with CTRS server, display code, poll for authorization, download and extract config ZIP to `/opt/centrunk/configs/`. Also captures the `X-Netbird-Setup-Key` and `X-Netbird-Hostname` response headers, and caches the latter to `/opt/centrunk/netbird-hostname`. **Without a claim token the flow is exactly the original one** (interactive or `-y`): any register/poll failure or an `expired` code exits, and existing configs trigger the overwrite prompt on `/dev/tty`. With a claim token, `claim_token_pairing` runs instead: it re-registers on `expired`/401/404 and retries network errors, 403/429 and 5xx with backoff capped at 60s; `consumed` is fatal, as is a rejected token (register HTTP 410, or a response without `claimed: true`). A claimed device is approved on the myCTRS Hotspot Claims page, `/device/claims/`. With a token, existing configs are kept and pairing is skipped (no prompt). `-y` alone changes none of this
 12a. `load_netbird_hostname` - Recover the cached device name when this run never reached CTRS (`--skip-device-setup`, or declining the overwrite prompt). A name from the current run always wins
 12b. `set_hostname` - Rename the box to the `X-Netbird-Hostname` value, but **only** if the current hostname is still the stock `raspberrypi`; a deliberately-set hostname is left alone
 12c. `connect_netbird` - `netbird up` with the setup key, passing `--hostname "$NETBIRD_HOSTNAME"` so the VPN peer name is correct regardless of the system hostname
@@ -64,11 +64,12 @@ TODO.md                  # Project backlog
 - `--skip-user-setup` - Skip ctrs service account creation
 - `--skip-upgrade` - Skip the full package upgrade (used by CI and `test-local.sh`, where the emulated run would otherwise be very slow)
 - `--ctrs-url <url>` - CTRS server URL (default: `https://my.centrunk.net`); also settable via `CTRS_URL` env var
-- `-y` / `--yes` - Non-interactive mode (auto-detected when piped)
+- `--claim-token-file <path>` - myCTRS claim token for headless pairing (also `CTRS_CLAIM_TOKEN_FILE`). Read and validated (`^[A-Za-z0-9_-]+$`) early by `load_claim_token`; sent as JSON `{"claim_token": ...}` on curl's stdin, never argv. Without it the register request is unchanged
+- `-y` / `--yes` - Non-interactive mode (explicit only; not auto-detected)
 - `--help` - Show usage
 
 ### One-liner Support
-Script detects piped input (`[[ ! -t 0 ]]`) and auto-enables non-interactive mode. Service files are downloaded from the raw GitHub URL rather than relying on local files.
+Piping does not enable non-interactive mode; pass `-y` for that. Interactive prompts read from `/dev/tty`, so they still work under `curl | sudo bash`. Service files are downloaded from the raw GitHub URL rather than relying on local files.
 
 ## Directory Layout on Target
 

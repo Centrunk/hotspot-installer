@@ -57,9 +57,37 @@ sudo ./install.sh --skip-netbird
 # Skip systemd service installation
 sudo ./install.sh --skip-services
 
+# Pair headlessly with a myCTRS claim token (unattended / first boot)
+sudo ./install.sh -y --claim-token-file /etc/centrunk/claim-token
+
 # Show help
 ./install.sh --help
 ```
+
+### Unattended pairing with a claim token
+
+`--claim-token-file <path>` (or the `CTRS_CLAIM_TOKEN_FILE` environment variable)
+lets a headless device pair without anyone reading its console. The file holds a
+claim token minted in myCTRS; surrounding whitespace is ignored, and the installer
+stops immediately if the file is missing, empty, or not a valid token.
+
+- The device registers as **claimed** and appears in the owner's queue. Approve it
+  on the **Hotspot Claims** page (`https://my.centrunk.net/device/claims/`, or
+  `<ctrs-url>/device/claims/`). The token only routes the device to
+  you; it never authorizes anything by itself.
+- The token is never printed and never placed on a command line (it is sent to
+  curl on stdin), so it does not show up in `ps`.
+- With a claim token, the installer waits indefinitely: an expired code is
+  replaced by a fresh registration, and network errors, rate limits (HTTP
+  403/429) and server errors are retried with exponential backoff capped at 60s.
+  A configuration that someone else already downloaded is still fatal, and so is
+  a claim token the server rejects (expired, revoked or already used) — mint a
+  new one and re-flash the card.
+- With a claim token, existing configs in `/opt/centrunk/configs/` are kept and
+  pairing is skipped. Run without a token to replace them.
+- Without a claim token nothing changes, with or without `-y`: the installer
+  shows the device code, exits on any pairing failure or expired code, and asks
+  before overwriting existing configs.
 
 ## What Gets Installed
 
